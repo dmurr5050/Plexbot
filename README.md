@@ -6,6 +6,9 @@ Powered by DAT — Dans Automation Tools
 Stop renaming files by hand. PlexBot does it in seconds.
 
 
+<img width="1095" height="788" alt="image" src="https://github.com/user-attachments/assets/9666877b-9323-46c1-b1fb-b97433556f9e" />
+
+
 What is PlexBot?
 PlexBot is a FileBot-style desktop application that takes your messy downloaded video filenames and automatically renames them into clean, Plex-compatible formats. It looks up episode titles and movie names from online databases, optionally tags files with resolution and codec info, moves them to your Plex library folders, and handles subtitle files alongside the video — all with a live preview before anything is changed.
 
