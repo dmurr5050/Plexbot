@@ -1371,7 +1371,12 @@ class BaseTab(Frame):
 # ── TV Shows Tab ──────────────────────────────────────────────────────────────
 class TVTab(BaseTab):
     def __init__(self, parent, app):
-        super().__init__(parent, app, StringVar(value="D:/Plex DVR 10TB/TV Shows"), ACCENT)
+        _tv_dest = load_config().get("tv_dest", "")
+        self._dest_var_ref = StringVar(value=_tv_dest)
+        super().__init__(parent, app, self._dest_var_ref, ACCENT)
+        # Save whenever the destination changes
+        self._dest_var_ref.trace_add("write",
+            lambda *_: save_config({"tv_dest": self._dest_var_ref.get().strip()}))
 
     def _toolbar(self, p):
         super()._toolbar(p)
@@ -1437,7 +1442,12 @@ class TVTab(BaseTab):
 # ── Movies Tab ────────────────────────────────────────────────────────────────
 class MoviesTab(BaseTab):
     def __init__(self, parent, app):
-        super().__init__(parent, app, StringVar(value="D:/Plex DVR 10TB/Movies"), ACCENT_BLUE)
+        _movie_dest = load_config().get("movie_dest", "")
+        self._dest_var_ref = StringVar(value=_movie_dest)
+        super().__init__(parent, app, self._dest_var_ref, ACCENT_BLUE)
+        # Save whenever the destination changes
+        self._dest_var_ref.trace_add("write",
+            lambda *_: save_config({"movie_dest": self._dest_var_ref.get().strip()}))
         self._inject_api_bar()
 
     def _inject_api_bar(self):
