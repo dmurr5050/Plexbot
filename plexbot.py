@@ -29,6 +29,7 @@ from tkinter import ttk, filedialog, messagebox
 VIDEO_EXTENSIONS    = {'.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv', '.ts', '.m2ts', '.mpg', '.mpeg'}
 SUBTITLE_EXTENSIONS = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx', '.sup', '.pgs'}
 TVMAZE_BASE  = "https://api.tvmaze.com"
+TVDB_BASE    = "https://api4.thetvdb.com/v4"
 OMDB_BASE    = "http://www.omdbapi.com"
 OMDB_API_KEY = ""          # Paste your free OMDb key here, or enter it in the Movies tab
 APP_TITLE    = "PlexBot"
@@ -173,6 +174,95 @@ def omdb_get_movie(imdb_id: str, api_key: str) -> dict:
         "title":    data.get("Title", ""),
         "year":     data.get("Year", "????")[:4],
         "overview": data.get("Plot", "")[:120],
+    }
+
+# ── TheTVDB API ───────────────────────────────────────────────────────────────
+_TVDB_API_KEY     = "068ef573-b79b-4162-b121-b5af659cdafd"   # built-in key
+_tvdb_token_cache: dict = {}                                  # {"token": bearer}
+
+def _tvdb_get_token() -> str:
+    """Exchange the built-in TVDB key for a bearer token (cached for the session)."""
+    if _tvdb_token_cache.get("token"):
+        return _tvdb_token_cache["token"]
+    r = requests.post(f"{TVDB_BASE}/login",
+                      json={"apikey": _TVDB_API_KEY}, timeout=10)
+    if r.status_code == 401:
+        raise ValueError("TheTVDB authentication failed.")
+    r.raise_for_status()
+    token = r.json()["data"]["token"]
+    _tvdb_token_cache["token"] = token
+    return token
+
+def tvdb_search_shows(query: str) -> list:
+    """Return up to 10 series matches from TheTVDB."""
+    token = _tvdb_get_token()
+    r = requests.get(f"{TVDB_BASE}/search",
+                     params={"query": query, "type": "series", "limit": 10},
+                     headers={"Authorization": f"Bearer {token}"}, timeout=10)
+    r.raise_for_status()
+    results = []
+    for item in (r.json().get("data") or [])[:10]:
+        year = (item.get("year") or item.get("firstAired") or "")[:4]
+        results.append({
+            "id":        item.get("tvdb_id") or item.get("id", 0),
+            "name":      item.get("name", ""),
+            "premiered": year,
+            "network":   item.get("network", ""),
+            "summary":   re.sub(r"<[^>]+>", "", item.get("overview") or "").strip()[:120],
+        })
+    return results
+
+def tvdb_get_episode(show_id: int, season: int, episode: int) -> dict:
+    """Fetch a single episode from TheTVDB by show id, season, and episode number."""
+    token = _tvdb_get_token()
+    time.sleep(0.2)
+    r = requests.get(
+        f"{TVDB_BASE}/series/{show_id}/episodes/official",
+        params={"season": season, "episodeNumber": episode, "page": 0},
+        headers={"Authorization": f"Bearer {token}"}, timeout=10)
+    r.raise_for_status()
+    episodes = (r.json().get("data") or {}).get("episodes") or []
+    for ep in episodes:
+        if ep.get("seasonNumber") == season and ep.get("number") == episode:
+            return {"name": ep.get("name") or f"Episode {episode}"}
+    raise ValueError(f"S{season:02d}E{episode:02d} not found on TheTVDB")
+
+def tvdb_search_movies(query: str) -> list:
+    """Return up to 10 movie matches from TheTVDB."""
+    token = _tvdb_get_token()
+    r = requests.get(f"{TVDB_BASE}/search",
+                     params={"query": query, "type": "movie", "limit": 10},
+                     headers={"Authorization": f"Bearer {token}"}, timeout=10)
+    r.raise_for_status()
+    results = []
+    for item in (r.json().get("data") or [])[:10]:
+        year = (item.get("year") or item.get("firstAired") or "")[:4]
+        results.append({
+            "id":       item.get("tvdb_id") or item.get("id", 0),
+            "title":    item.get("name", ""),
+            "year":     year,
+            "overview": re.sub(r"<[^>]+>", "", item.get("overview") or "").strip()[:120],
+        })
+    return results
+
+def tvdb_get_movie(movie_id: int) -> dict:
+    """Fetch full movie details from TheTVDB by movie ID."""
+    token = _tvdb_get_token()
+    r = requests.get(f"{TVDB_BASE}/movies/{movie_id}",
+                     headers={"Authorization": f"Bearer {token}"}, timeout=10)
+    r.raise_for_status()
+    data = (r.json().get("data") or {})
+    # year: prefer released field, fall back to firstAired
+    year = ""
+    for src in (data.get("year"), data.get("firstAired"), ""):
+        if src:
+            year = str(src)[:4]
+            break
+    return {
+        "id":       data.get("id", movie_id),
+        "title":    data.get("name", ""),
+        "year":     year,
+        "overview": re.sub(r"<[^>]+>", "", data.get("overview") or "").strip()[:120],
     }
 
 # ── Filename Parsing ──────────────────────────────────────────────────────────
@@ -1373,15 +1463,72 @@ class TVTab(BaseTab):
     def __init__(self, parent, app):
         _tv_dest = load_config().get("tv_dest", "")
         self._dest_var_ref = StringVar(value=_tv_dest)
+        _saved_source = load_config().get("tv_source", "TVmaze")
+        self.tv_source = StringVar(value=_saved_source)
         super().__init__(parent, app, self._dest_var_ref, ACCENT)
         # Save whenever the destination changes
         self._dest_var_ref.trace_add("write",
             lambda *_: save_config({"tv_dest": self._dest_var_ref.get().strip()}))
+        # Save source selection
+        self.tv_source.trace_add("write",
+            lambda *_: save_config({"tv_source": self.tv_source.get()}))
 
     def _toolbar(self, p):
         super()._toolbar(p)
-        Label(p, text="Lookup via TV Maze", font=("Segoe UI", 8),
-              fg=MUTED, bg=BG_PANEL).pack(side=RIGHT, padx=14)
+        # ── Source selector (right-side of toolbar) ──────────────────────
+        sel_frame = Frame(p, bg=BG_PANEL)
+        sel_frame.pack(side=RIGHT, padx=(0, 12))
+
+        Label(sel_frame, text="SOURCE", font=("Segoe UI", 7, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=(0, 6))
+
+        SOURCES = [
+            ("TVmaze",   "🔵"),
+            ("TheTVDB",  "🟠"),
+        ]
+
+        self._src_btns = {}
+        pill_frame = Frame(sel_frame, bg=BG_SURFACE, bd=0,
+                           highlightthickness=1, highlightbackground=BORDER)
+        pill_frame.pack(side=LEFT)
+
+        for i, (name, icon) in enumerate(SOURCES):
+            is_first = i == 0
+            is_last  = i == len(SOURCES) - 1
+            padx = (6 if is_first else 2, 6 if is_last else 2)
+
+            btn = Label(pill_frame, text=f"{icon} {name}",
+                        font=("Segoe UI", 8, "bold"),
+                        bg=BG_SURFACE, fg=MUTED,
+                        cursor="hand2", padx=10, pady=4)
+            btn.pack(side=LEFT, padx=padx, pady=3)
+            self._src_btns[name] = btn
+
+            def on_click(e, n=name):
+                self._set_source(n)
+            btn.bind("<Button-1>", on_click)
+            btn.bind("<Enter>",    lambda e, b=btn: b.configure(fg=WHITE) if b.cget("fg") != "#000000" else None)
+            btn.bind("<Leave>",    lambda e, n=name, b=btn: self._restore_btn_color(n, b))
+
+            if i < len(SOURCES) - 1:
+                Frame(pill_frame, bg=BORDER, width=1).pack(side=LEFT, fill=Y, pady=4)
+
+        # Apply initial selection styling
+        self.after(50, lambda: self._set_source(self.tv_source.get()))
+
+    def _set_source(self, name: str):
+        self.tv_source.set(name)
+        for n, b in self._src_btns.items():
+            if n == name:
+                b.configure(fg="#000000", bg=ACCENT)
+            else:
+                b.configure(fg=MUTED, bg=BG_SURFACE)
+
+    def _restore_btn_color(self, name: str, btn: Label):
+        if self.tv_source.get() == name:
+            btn.configure(fg="#000000", bg=ACCENT)
+        else:
+            btn.configure(fg=MUTED, bg=BG_SURFACE)
 
     def _lookup_label(self): return "🔍  Lookup Episodes"
     def _parse(self, f):     return parse_tv_filename(f)
@@ -1389,23 +1536,41 @@ class TVTab(BaseTab):
 
     def _do_lookup(self, entry):
         p = entry["parsed"]
-        # Try exact single-search first; fall back to multi-search picker
-        results = tvmaze_search_shows(p["show_name"])
-        if not results:
-            raise LookupNotFoundError(
-                f"Show not found: '{p['show_name']}'", p["show_name"])
-        # Use top result — if confidence is low (name differs a lot), show picker
-        top  = results[0]
-        name_match = top["name"].lower().strip()
-        query_norm = p["show_name"].lower().strip()
-        if name_match != query_norm and len(results) > 1:
-            raise LookupNotFoundError(
-                f"Multiple matches for '{p['show_name']}'", p["show_name"])
-        self._finish_tv_lookup(entry, top["id"], top["name"])
+        source = self.tv_source.get()
+
+        if source == "TheTVDB":
+            results = tvdb_search_shows(p["show_name"])
+            if not results:
+                raise LookupNotFoundError(
+                    f"Show not found: '{p['show_name']}'", p["show_name"])
+            top = results[0]
+            name_match = top["name"].lower().strip()
+            query_norm = p["show_name"].lower().strip()
+            if name_match != query_norm and len(results) > 1:
+                raise LookupNotFoundError(
+                    f"Multiple matches for '{p['show_name']}'", p["show_name"])
+            self._finish_tv_lookup(entry, top["id"], top["name"])
+        else:
+            # TVmaze (default)
+            results = tvmaze_search_shows(p["show_name"])
+            if not results:
+                raise LookupNotFoundError(
+                    f"Show not found: '{p['show_name']}'", p["show_name"])
+            top  = results[0]
+            name_match = top["name"].lower().strip()
+            query_norm = p["show_name"].lower().strip()
+            if name_match != query_norm and len(results) > 1:
+                raise LookupNotFoundError(
+                    f"Multiple matches for '{p['show_name']}'", p["show_name"])
+            self._finish_tv_lookup(entry, top["id"], top["name"])
 
     def _finish_tv_lookup(self, entry, show_id: int, show_name: str):
         p  = entry["parsed"]
-        ep = tvmaze_get_episode_by_id(show_id, p["season"], p["episode"])
+        source = self.tv_source.get()
+        if source == "TheTVDB":
+            ep = tvdb_get_episode(show_id, p["season"], p["episode"])
+        else:
+            ep = tvmaze_get_episode_by_id(show_id, p["season"], p["episode"])
         media = get_media_info(entry["path"])
         entry["media_info"] = media
         # Update parsed show name to the confirmed TVmaze name
@@ -1421,11 +1586,17 @@ class TVTab(BaseTab):
         ]
 
     def _show_picker(self, entry, query: str):
-        def search_fn(q):
-            return tvmaze_search_shows(q)
+        source = self.tv_source.get()
+        if source == "TheTVDB":
+            def search_fn(q):
+                return tvdb_search_shows(q)
+            title = "TV Show Not Found — Pick a Match  (TheTVDB)"
+        else:
+            def search_fn(q):
+                return tvmaze_search_shows(q)
+            title = "TV Show Not Found — Pick a Match  (TVmaze)"
         dlg = SearchPickerDialog(
-            self.app, "TV Show Not Found — Pick a Match",
-            entry["path"].name, query, search_fn, self.color)
+            self.app, title, entry["path"].name, query, search_fn, self.color)
         return dlg
 
     def _do_lookup_with_choice(self, entry, choice: dict):
@@ -1444,17 +1615,81 @@ class MoviesTab(BaseTab):
     def __init__(self, parent, app):
         _movie_dest = load_config().get("movie_dest", "")
         self._dest_var_ref = StringVar(value=_movie_dest)
+        _saved_source = load_config().get("movie_source", "OMDb")
+        self.movie_source = StringVar(value=_saved_source)
         super().__init__(parent, app, self._dest_var_ref, ACCENT_BLUE)
-        # Save whenever the destination changes
+        # Save whenever the destination or source changes
         self._dest_var_ref.trace_add("write",
             lambda *_: save_config({"movie_dest": self._dest_var_ref.get().strip()}))
+        self.movie_source.trace_add("write",
+            lambda *_: save_config({"movie_source": self.movie_source.get()}))
         self._inject_api_bar()
 
+    def _toolbar(self, p):
+        super()._toolbar(p)
+        # ── Source selector (right-side of toolbar) ──────────────────────
+        sel_frame = Frame(p, bg=BG_PANEL)
+        sel_frame.pack(side=RIGHT, padx=(0, 12))
+
+        Label(sel_frame, text="SOURCE", font=("Segoe UI", 7, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=(0, 6))
+
+        SOURCES = [
+            ("OMDb",     "🟢"),
+            ("TheTVDB",  "🟠"),
+        ]
+
+        self._src_btns = {}
+        pill_frame = Frame(sel_frame, bg=BG_SURFACE, bd=0,
+                           highlightthickness=1, highlightbackground=BORDER)
+        pill_frame.pack(side=LEFT)
+
+        for i, (name, icon) in enumerate(SOURCES):
+            is_first = i == 0
+            is_last  = i == len(SOURCES) - 1
+            padx = (6 if is_first else 2, 6 if is_last else 2)
+
+            btn = Label(pill_frame, text=f"{icon} {name}",
+                        font=("Segoe UI", 8, "bold"),
+                        bg=BG_SURFACE, fg=MUTED,
+                        cursor="hand2", padx=10, pady=4)
+            btn.pack(side=LEFT, padx=padx, pady=3)
+            self._src_btns[name] = btn
+
+            def on_click(e, n=name):
+                self._set_source(n)
+            btn.bind("<Button-1>", on_click)
+            btn.bind("<Enter>",    lambda e, b=btn: b.configure(fg=WHITE) if b.cget("fg") != "#000000" else None)
+            btn.bind("<Leave>",    lambda e, n=name, b=btn: self._restore_btn_color(n, b))
+
+            if i < len(SOURCES) - 1:
+                Frame(pill_frame, bg=BORDER, width=1).pack(side=LEFT, fill=Y, pady=4)
+
+        # Apply initial selection styling after widget is fully built
+        self.after(50, lambda: self._set_source(self.movie_source.get()))
+
+    def _set_source(self, name: str):
+        self.movie_source.set(name)
+        for n, b in self._src_btns.items():
+            if n == name:
+                b.configure(fg="#000000", bg=ACCENT_BLUE)
+            else:
+                b.configure(fg=MUTED, bg=BG_SURFACE)
+        # Show/hide OMDb key bar based on selection
+        if hasattr(self, "_omdb_bar"):
+            self._update_omdb_bar_visibility()
+
+    def _restore_btn_color(self, name: str, btn: Label):
+        if self.movie_source.get() == name:
+            btn.configure(fg="#000000", bg=ACCENT_BLUE)
+        else:
+            btn.configure(fg=MUTED, bg=BG_SURFACE)
+
     def _inject_api_bar(self):
-        """Add OMDb API key bar at the very top of the tab."""
+        """Add OMDb API key bar — only visible when OMDb is the selected source."""
         bar = Frame(self, bg=BG_PANEL)
-        # Place it before the first child (toolbar)
         bar.pack(fill=X, before=self.winfo_children()[0])
+        self._omdb_bar = bar
         Frame(bar, bg=BORDER, height=1).pack(fill=X)
 
         row = Frame(bar, bg=BG_PANEL)
@@ -1495,6 +1730,17 @@ class MoviesTab(BaseTab):
         link.bind("<Leave>", lambda e: link.configure(fg=BLUE,
             font=("Segoe UI", 8)))
 
+        # Set initial visibility and watch for source changes
+        self._update_omdb_bar_visibility()
+        self.movie_source.trace_add("write", lambda *_: self._update_omdb_bar_visibility())
+
+    def _update_omdb_bar_visibility(self):
+        """Show the OMDb key bar only when OMDb is the selected source."""
+        if self.movie_source.get() == "OMDb":
+            self._omdb_bar.pack(fill=X, before=self.winfo_children()[1])
+        else:
+            self._omdb_bar.pack_forget()
+
     def _lookup_label(self): return "🔍  Lookup Movies"
     def _parse(self, f):     return parse_movie_filename(f)
 
@@ -1503,22 +1749,35 @@ class MoviesTab(BaseTab):
         return ""
 
     def _do_lookup(self, entry):
-        key = self.api_key_var.get().strip()
-        if not key:
-            raise ValueError("Enter your OMDb API key at the top of the Movies tab")
-        p       = entry["parsed"]
-        results = omdb_search_movies(p["raw_title"], p.get("year"), key)
-        if not results:
-            raise LookupNotFoundError(
-                f"Movie not found: '{p['raw_title']}'", p["raw_title"])
-        top = results[0]
-        # If year doesn't match or multiple plausible results, show picker
-        if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
-            raise LookupNotFoundError(
-                f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
-        # Fetch full details to confirm title
-        full = omdb_get_movie(top["id"], key)
-        self._finish_movie_lookup(entry, full)
+        p      = entry["parsed"]
+        source = self.movie_source.get()
+
+        if source == "TheTVDB":
+            results = tvdb_search_movies(p["raw_title"])
+            if not results:
+                raise LookupNotFoundError(
+                    f"Movie not found: '{p['raw_title']}'", p["raw_title"])
+            top = results[0]
+            if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
+                raise LookupNotFoundError(
+                    f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
+            full = tvdb_get_movie(top["id"])
+            self._finish_movie_lookup(entry, full)
+        else:
+            # OMDb (default)
+            key = self.api_key_var.get().strip()
+            if not key:
+                raise ValueError("Enter your OMDb API key at the top of the Movies tab")
+            results = omdb_search_movies(p["raw_title"], p.get("year"), key)
+            if not results:
+                raise LookupNotFoundError(
+                    f"Movie not found: '{p['raw_title']}'", p["raw_title"])
+            top = results[0]
+            if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
+                raise LookupNotFoundError(
+                    f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
+            full = omdb_get_movie(top["id"], key)
+            self._finish_movie_lookup(entry, full)
 
     def _finish_movie_lookup(self, entry, result: dict):
         p     = entry["parsed"]
@@ -1538,17 +1797,27 @@ class MoviesTab(BaseTab):
         ]
 
     def _show_picker(self, entry, query: str):
-        key = self.api_key_var.get().strip()
-        def search_fn(q):
-            return omdb_search_movies(q, None, key)
+        source = self.movie_source.get()
+        if source == "TheTVDB":
+            def search_fn(q):
+                return tvdb_search_movies(q)
+            title = "Movie Not Found — Pick a Match  (TheTVDB)"
+        else:
+            key = self.api_key_var.get().strip()
+            def search_fn(q):
+                return omdb_search_movies(q, None, key)
+            title = "Movie Not Found — Pick a Match  (OMDb)"
         dlg = SearchPickerDialog(
-            self.app, "Movie Not Found — Pick a Match",
-            entry["path"].name, query, search_fn, self.color)
+            self.app, title, entry["path"].name, query, search_fn, self.color)
         return dlg
 
     def _do_lookup_with_choice(self, entry, choice: dict):
-        key  = self.api_key_var.get().strip()
-        full = omdb_get_movie(choice["id"], key) if choice.get("id") else choice
+        source = self.movie_source.get()
+        if source == "TheTVDB":
+            full = tvdb_get_movie(choice["id"]) if choice.get("id") else choice
+        else:
+            key  = self.api_key_var.get().strip()
+            full = omdb_get_movie(choice["id"], key) if choice.get("id") else choice
         self._finish_movie_lookup(entry, full)
 
     def _update_preview(self):
