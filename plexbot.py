@@ -2107,11 +2107,12 @@ class PlexBot(Tk):
         style.configure("PB.TNotebook",
                         background=BG_DARK, borderwidth=0, tabmargins=0)
         style.configure("PB.TNotebook.Tab",
-                        background=BG_PANEL, foreground=MUTED,
-                        font=("Segoe UI",10,"bold"), padding=[22,8], borderwidth=0)
+                        background=BG_DARK, foreground=MUTED,
+                        font=("Segoe UI",9), padding=[22,8], borderwidth=0)
         style.map("PB.TNotebook.Tab",
-                  background=[("selected", BG_DARK)],
-                  foreground=[("selected", ACCENT)])
+                  background=[("selected", BG_PANEL)],
+                  foreground=[("selected", ACCENT)],
+                  font=[("selected", ("Segoe UI",11,"bold"))])
 
         nb = ttk.Notebook(self, style="PB.TNotebook")
         nb.pack(fill=BOTH, expand=True)
