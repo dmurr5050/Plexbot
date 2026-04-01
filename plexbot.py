@@ -29,11 +29,10 @@ from tkinter import ttk, filedialog, messagebox
 VIDEO_EXTENSIONS    = {'.mkv', '.mp4', '.avi', '.mov', '.m4v', '.wmv', '.ts', '.m2ts', '.mpg', '.mpeg'}
 SUBTITLE_EXTENSIONS = {'.srt', '.sub', '.ass', '.ssa', '.vtt', '.idx', '.sup', '.pgs'}
 TVMAZE_BASE  = "https://api.tvmaze.com"
-TVDB_BASE    = "https://api4.thetvdb.com/v4"
 OMDB_BASE    = "http://www.omdbapi.com"
 OMDB_API_KEY = ""          # Paste your free OMDb key here, or enter it in the Movies tab
 APP_TITLE    = "PlexBot"
-VERSION      = "1.0"
+VERSION      = "1.02"
 
 # ── Embedded header icon (40x40 PNG, base64) ─────────────────────────────────
 HEADER_ICON_B64 = """iVBORw0KGgoAAAANSUhEUgAAACgAAAAoCAYAAACM/rhtAAAHI0lEQVR4nM2Ya4hV1xXH/2vtfV9z753XnTE2GhQ1TJoGDdzYxCaNDW2JoW3AUApFbWkInUqblpAPrbZhEJpPbT8JocWWtFKk+VAoQUwwylCisQzVPpgo7WhmRqNxnDtzn+c+ztl7r364j5k4UWe8o/QPh3PPPufu/Ttrr7X2PovQkAyBcW9a4cppS/vgGs0EgBtnwvJKGodrnJcstaw4tx7rEw1AMgSmfXBXX1/z2D0r9baLl9zxNd8dP0mAE0AnEn2fI0KaCJ0AICJtW5KIxDmpMPO/IhGcnJ6eLjVv4Tpr6tP3phVw2gnoa+gK7U1mKjEA7/anUt+r+PQiET14Xeft8gEAmOv9VKsykUj0HSiVMr8AEKDuUk0Xg27+EFAZeWMKFbFA72vGqd2AQETc/D8ssxigtcz0ajLZvw2obi8WizOYZ8kWYGBcCGB98K/mh2COi3MWc0HCdwgQgIiIBET8eeciR4DercBkgEbwLBg4sIgB4lB33DsI1hIBCIs4n5k/m0x6+wDY5tgLAJjmbt5lhUScE5Hvx+Mr7kEDcgGILH++W6wIgGPmuNbuq422hYD/BxLnZEvzQt/syVuJ+ebmboaiXVoOIKCec4E2AYsVQSvWr1djIWMFJGJUn7/FL2i2LUAiwFjgla9HsWEloxrIAkbfCC7PCkbGLN49ZyEAoqFFQ7a6u20LOgGeflhjy4CCV5G6N8v8+yKKiQILnDhn8KPXq7iYkaVAAmgznRTKglxJkPUE2ZIgXxEUquIKFREnRLmyIF8WfHmjxsEfRINYyJWtW1qaaMsHFQNMAq0A58T9+A+zb05ekyAcEvXo/dGVu5+Jp6MhDl/JOaTXa7XrSTq3/4gb6E5yZLGB0xZgUwSACebEOVP7YCr6lWiU9Tv/dDVWAfY8F6WKL84K8dbPKLP/cO0Skd7QmOhbGnNZ82BvgiPxuOrojnOUlOoan0akRSBAPEwMmJm5lltrWSzY1EdZU/VKzno14kSM5LlHNfmNhMFMuJIzRQD6rvkgUN8figgA0q8NprZcmiGlFOHhtUwPrGIUKuIiIULVF/z5pHeeVeRJJwIsMlaWxYICgAn8pU3RNUQCCFAzAt8QujuIw5rw23eyw0fO1IKursRaWye8e4BNedW50HQCF1hXvXjNXD04XBjZf6Q0nUz2fFOEFCCLzoRtA4oIiADrxP3sT9nDH067GkF0yRd7KWNrE1MCILS6M9m7HcQRkcVbb1kAgbk0c/zfQWX8amybDkMLQCFFoa4uDjERjHXAEuGWDbCprhiFox3cGQsTOanzOCfi0AJb8l6zLUDr6lNrHQARZwXinFjnoOett2199LcF2B0n9HQqjvsE30hUMfi2SgQ30e0CimLQ747X/NFJM2ItDCDBVNYUQopoOSFvC1AExAQcOBbwgbeDfjQ2mLFYxwMhDbX4JHKHAJvqjpNmig40r42TRqC2rdvbsHLjG8s5B2aGdQ52bvvZilQiai2B84GbZZNbvQQRVVtjLhZORFAsFlEqFQEIPK9e71FKUV3MzEzMjFqtikKhgCAIQERQSkEpBWstgiBoveiNx8KZJuuiAEUE4XAETzzxBWze/BiIGI8/vtWKiM3lsqjVaqhWyyiXPRSLRaxffz+eeuqL6OvrhzEB8vkccrksEokE+vtXuErF+yRIAcAiEjCrNxtt9kZT7NAsPTDD80ry0EMbae/efflisaBHRk6pdevW1y5f/lCl0+no6Oio7uzsEmaG79cqu3Y9rzdufLB89ux5fumlweiOHd/hsbH/YGDg03rnzp2FF174ls5kZhJa6/nTbYgo5Jz7Yz4/NY566WUhoAi4YdlmCYSAut/FYh16cvKDwsTEBfT19XXt2TNkN2xYN/P++2dDhw4dTB469Bfs2LE9W6v5n8rlZsRa4wYHX5RVq+6b2bQp3a0UV8bGxoJMZlppHW7CSRNORCaB8MuNcQWY54MhzQFA5tlH9K/h3FvE3Kh6igFgAAQXLvx3Zvfub+tjx97u1zpUPHXqhD8xMWFHRt7LrF59X254+OhUf/+KRLlc9sLhWNmYoHD27KhHxBHfr04dPXq4HInEqbc3JcYYQ0QGABFxSETGRWRbqfRRZt4sgv7+m3TokcHTwdTv1/58xYboT8tXqq/GvzHxSqo39Us/oOeJqBsAiLi+a7EOSjGYGaVSET09vTDGQmuNbHYWPT29CAIfyWQSmUwGvl9DKtWParWCctlDKlX3y0qlCmaGiKuI4A0R/onnXZvC9QXMdM86B5yGs/Q3FM0bs3k5A0Cy2ZmXI9HUr5TCM0TY7JzpAoSJlBhj4JxwLNbhCoU811MKEIvFpFDIg4jJ80oUDkeloyPu8vkcMyuKxTpsLjdLRApaswfIP4jorWJx+nyD52NwNxPh7hbRW75+Q8kQWIa3ahn6WG5k1JP5nTxumur+B/kLcXiVegI/AAAAAElFTkSuQmCC"""
@@ -174,95 +173,6 @@ def omdb_get_movie(imdb_id: str, api_key: str) -> dict:
         "title":    data.get("Title", ""),
         "year":     data.get("Year", "????")[:4],
         "overview": data.get("Plot", "")[:120],
-    }
-
-# ── TheTVDB API ───────────────────────────────────────────────────────────────
-_TVDB_API_KEY     = "068ef573-b79b-4162-b121-b5af659cdafd"   # built-in key
-_tvdb_token_cache: dict = {}                                  # {"token": bearer}
-
-def _tvdb_get_token() -> str:
-    """Exchange the built-in TVDB key for a bearer token (cached for the session)."""
-    if _tvdb_token_cache.get("token"):
-        return _tvdb_token_cache["token"]
-    r = requests.post(f"{TVDB_BASE}/login",
-                      json={"apikey": _TVDB_API_KEY}, timeout=10)
-    if r.status_code == 401:
-        raise ValueError("TheTVDB authentication failed.")
-    r.raise_for_status()
-    token = r.json()["data"]["token"]
-    _tvdb_token_cache["token"] = token
-    return token
-
-def tvdb_search_shows(query: str) -> list:
-    """Return up to 10 series matches from TheTVDB."""
-    token = _tvdb_get_token()
-    r = requests.get(f"{TVDB_BASE}/search",
-                     params={"query": query, "type": "series", "limit": 10},
-                     headers={"Authorization": f"Bearer {token}"}, timeout=10)
-    r.raise_for_status()
-    results = []
-    for item in (r.json().get("data") or [])[:10]:
-        year = (item.get("year") or item.get("firstAired") or "")[:4]
-        results.append({
-            "id":        item.get("tvdb_id") or item.get("id", 0),
-            "name":      item.get("name", ""),
-            "premiered": year,
-            "network":   item.get("network", ""),
-            "summary":   re.sub(r"<[^>]+>", "", item.get("overview") or "").strip()[:120],
-        })
-    return results
-
-def tvdb_get_episode(show_id: int, season: int, episode: int) -> dict:
-    """Fetch a single episode from TheTVDB by show id, season, and episode number."""
-    token = _tvdb_get_token()
-    time.sleep(0.2)
-    r = requests.get(
-        f"{TVDB_BASE}/series/{show_id}/episodes/official",
-        params={"season": season, "episodeNumber": episode, "page": 0},
-        headers={"Authorization": f"Bearer {token}"}, timeout=10)
-    r.raise_for_status()
-    episodes = (r.json().get("data") or {}).get("episodes") or []
-    for ep in episodes:
-        if ep.get("seasonNumber") == season and ep.get("number") == episode:
-            return {"name": ep.get("name") or f"Episode {episode}"}
-    raise ValueError(f"S{season:02d}E{episode:02d} not found on TheTVDB")
-
-def tvdb_search_movies(query: str) -> list:
-    """Return up to 10 movie matches from TheTVDB."""
-    token = _tvdb_get_token()
-    r = requests.get(f"{TVDB_BASE}/search",
-                     params={"query": query, "type": "movie", "limit": 10},
-                     headers={"Authorization": f"Bearer {token}"}, timeout=10)
-    r.raise_for_status()
-    results = []
-    for item in (r.json().get("data") or [])[:10]:
-        year = (item.get("year") or item.get("firstAired") or "")[:4]
-        results.append({
-            "id":       item.get("tvdb_id") or item.get("id", 0),
-            "title":    item.get("name", ""),
-            "year":     year,
-            "overview": re.sub(r"<[^>]+>", "", item.get("overview") or "").strip()[:120],
-        })
-    return results
-
-def tvdb_get_movie(movie_id: int) -> dict:
-    """Fetch full movie details from TheTVDB by movie ID."""
-    token = _tvdb_get_token()
-    r = requests.get(f"{TVDB_BASE}/movies/{movie_id}",
-                     headers={"Authorization": f"Bearer {token}"}, timeout=10)
-    r.raise_for_status()
-    data = (r.json().get("data") or {})
-    # year: prefer released field, fall back to firstAired
-    year = ""
-    for src in (data.get("year"), data.get("firstAired"), ""):
-        if src:
-            year = str(src)[:4]
-            break
-    return {
-        "id":       data.get("id", movie_id),
-        "title":    data.get("name", ""),
-        "year":     year,
-        "overview": re.sub(r"<[^>]+>", "", data.get("overview") or "").strip()[:120],
     }
 
 # ── Filename Parsing ──────────────────────────────────────────────────────────
@@ -868,6 +778,8 @@ class BaseTab(Frame):
         self.opt_resolution  = BooleanVar(value=True)
         self.opt_video_codec = BooleanVar(value=True)
         self.opt_audio_codec = BooleanVar(value=True)
+        _saved_mode = load_config().get("file_mode", "move")
+        self.opt_copy_mode   = BooleanVar(value=(_saved_mode == "copy"))
         self._build()
 
     def _build(self):
@@ -951,7 +863,60 @@ class BaseTab(Frame):
         Label(p, text="Leave blank to rename in place",
               font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(2, 0))
 
-        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=12)
+        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 6))
+
+        # Copy / Move toggle
+        Label(p, text="FILE OPERATION", font=("Segoe UI", 9, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(0, 6))
+        fof = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
+        fof.pack(fill=X, padx=16)
+
+        # Two pill-style radio buttons inside the box
+        self._mode_frame = Frame(fof, bg=BG_SURFACE)
+        self._mode_frame.pack(fill=X, padx=8, pady=8)
+
+        self._move_btn = Label(self._mode_frame, text="✂  Move",
+                               font=FONT_SMALL, fg="#000",
+                               bg=self.color, cursor="hand2",
+                               padx=12, pady=5, anchor=CENTER)
+        self._move_btn.pack(side=LEFT, fill=X, expand=True, padx=(0, 4))
+
+        self._copy_btn = Label(self._mode_frame, text="⎘  Copy",
+                               font=FONT_SMALL, fg=TEXT_DIM,
+                               bg=BG_DARK, cursor="hand2",
+                               padx=12, pady=5, anchor=CENTER)
+        self._copy_btn.pack(side=LEFT, fill=X, expand=True)
+
+        # Hint line
+        self._mode_hint = Label(p, text="Original file will be deleted after rename",
+                                font=("Segoe UI", 8), fg=MUTED,
+                                bg=BG_PANEL, wraplength=240, justify=LEFT)
+        self._mode_hint.pack(anchor=W, padx=16, pady=(2, 0))
+
+        def _set_move():
+            self.opt_copy_mode.set(False)
+            self._move_btn.configure(fg="#000", bg=self.color)
+            self._copy_btn.configure(fg=TEXT_DIM, bg=BG_DARK)
+            self._mode_hint.configure(text="Original file will be deleted after rename")
+            save_config({"file_mode": "move"})
+            self._update_preview()
+
+        def _set_copy():
+            self.opt_copy_mode.set(True)
+            self._copy_btn.configure(fg="#000", bg=self.color)
+            self._move_btn.configure(fg=TEXT_DIM, bg=BG_DARK)
+            self._mode_hint.configure(text="Original file is kept — a renamed copy is created")
+            save_config({"file_mode": "copy"})
+            self._update_preview()
+
+        self._move_btn.bind("<Button-1>", lambda e: _set_move())
+        self._copy_btn.bind("<Button-1>", lambda e: _set_copy())
+
+        # Apply saved state on init
+        if self.opt_copy_mode.get():
+            _set_copy()
+
+        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
 
         # Checkboxes
         Label(p, text="INCLUDE IN FILENAME", font=("Segoe UI", 9, "bold"),
@@ -1317,7 +1282,8 @@ class BaseTab(Frame):
         ready = [e for e in self.file_entries if e["status"]=="done"]
         if not ready:
             messagebox.showinfo("Nothing Ready","Run Lookup first."); return
-        lines = ["PREVIEW — no files will be changed\n","="*60]
+        mode = "COPY  (original kept)" if self.opt_copy_mode.get() else "MOVE  (original deleted)"
+        lines = [f"PREVIEW — no files will be changed\nMode: {mode}\n","="*60]
         for e in ready:
             lines.append(f"\n  FROM:  {e['path'].name}")
             lines.append(f"    TO:  {self._dest_for(e) / e['new_name']}")
@@ -1329,17 +1295,20 @@ class BaseTab(Frame):
             messagebox.showinfo("Nothing Ready","Run Lookup first."); return
         dest_root = self.dest_var.get().strip()
         dest_path = Path(dest_root) if dest_root else None
+        copy_mode = self.opt_copy_mode.get()
         if dest_path and not dest_path.exists():
             if messagebox.askyesno("Create Folder?",
                     f"Destination doesn't exist:\n{dest_path}\n\nCreate it?"):
                 dest_path.mkdir(parents=True)
             else: return
+        op_word = "Copy" if copy_mode else "Rename"
         if not messagebox.askyesno("Confirm",
-                f"Rename {len(ready)} file(s)"
-                +(f"\nand move to:\n{dest_path}" if dest_path else "")
+                f"{op_word} {len(ready)} file(s)"
+                +(f"\nand {'copy' if copy_mode else 'move'} to:\n{dest_path}" if dest_path else "")
+                +("\n\nOriginals will be KEPT." if copy_mode else "\n\nOriginals will be deleted.")
                 +"\n\nContinue?"): return
 
-        log_lines   = ["RENAME LOG","="*60]
+        log_lines   = [f"{'COPY' if copy_mode else 'RENAME'} LOG","="*60]
         renamed = errors = sub_count = 0
         src_folders = set()  # Track folders we moved files out of
 
@@ -1353,20 +1322,31 @@ class BaseTab(Frame):
                 # ── Find subtitle siblings BEFORE moving the video ──
                 subs = find_subtitle_siblings(src)
 
-                # ── Move / rename the video file ──
+                # ── Copy or Move / rename the video file ──
                 e["_orig_name"] = src.name   # save before overwriting path
-                shutil.move(str(src), str(tgt)) if dest_path else src.rename(tgt)
+                if copy_mode:
+                    shutil.copy2(str(src), str(tgt))
+                elif dest_path:
+                    shutil.move(str(src), str(tgt))
+                else:
+                    src.rename(tgt)
                 src_folders.add(src.parent)
                 e["path"] = tgt; e["status"] = "renamed"
-                log_lines.append(f"\n  ✓  {src.name}\n     → {tgt}")
+                op_sym = "⎘" if copy_mode else "✓"
+                log_lines.append(f"\n  {op_sym}  {src.name}\n     → {tgt}")
                 renamed += 1
 
-                # ── Move / rename each subtitle sibling ──
+                # ── Copy or Move / rename each subtitle sibling ──
                 for sub in subs:
                     new_sub_name = build_subtitle_name(e["new_name"], sub)
                     sub_tgt      = tgt_dir / new_sub_name
                     try:
-                        shutil.move(str(sub), str(sub_tgt)) if dest_path else sub.rename(sub_tgt)
+                        if copy_mode:
+                            shutil.copy2(str(sub), str(sub_tgt))
+                        elif dest_path:
+                            shutil.move(str(sub), str(sub_tgt))
+                        else:
+                            sub.rename(sub_tgt)
                         log_lines.append(f"     ↳ subtitle: {sub.name}\n              → {sub_tgt.name}")
                         src_folders.add(sub.parent)
                         sub_count += 1
@@ -1378,29 +1358,28 @@ class BaseTab(Frame):
                 log_lines.append(f"\n  ✗  {src.name}\n     ERROR: {ex}")
                 errors += 1
 
-        # ── Clean up empty source folders ──────────────────────────────────
-        dest_root_path = Path(dest_root) if dest_root else None
-
-        # Build a set of "protected" roots — the shallowest source folder
-        # at each drive/top-level so we never delete the root a user picked.
-        # Strategy: protect any folder whose parent is NOT also in src_folders.
-        # That means only subfolders (children) can be deleted, never the top level.
-        protected = set()
-        for folder in src_folders:
-            if folder.parent not in src_folders:
-                protected.add(folder)   # This is a top-level source folder
-
+        # ── Clean up empty source folders (Move mode only) ─────────────────
         removed_folders = []
-        # Sort deepest first so children are removed before parents
-        for folder in sorted(src_folders, key=lambda p: len(p.parts), reverse=True):
-            if folder in protected:
-                continue  # Never delete the root source folder(s) the user loaded from
-            if dest_root_path and folder == dest_root_path:
-                continue  # Never delete the destination root
-            try_remove_empty_folder(folder)
-            if not folder.exists():
-                removed_folders.append(folder)
-                log_lines.append(f"\n  🗑  Removed empty folder: {folder}")
+        if not copy_mode:
+            dest_root_path = Path(dest_root) if dest_root else None
+
+            # Protect any folder whose parent is NOT also in src_folders
+            # (i.e. the top-level folder the user loaded from).
+            protected = set()
+            for folder in src_folders:
+                if folder.parent not in src_folders:
+                    protected.add(folder)
+
+            # Sort deepest first so children are removed before parents
+            for folder in sorted(src_folders, key=lambda p: len(p.parts), reverse=True):
+                if folder in protected:
+                    continue  # Never delete the root source folder(s)
+                if dest_root_path and folder == dest_root_path:
+                    continue  # Never delete the destination root
+                try_remove_empty_folder(folder)
+                if not folder.exists():
+                    removed_folders.append(folder)
+                    log_lines.append(f"\n  🗑  Removed empty folder: {folder}")
 
         # ── Save history entries to config ──
         import datetime
@@ -1423,12 +1402,13 @@ class BaseTab(Frame):
             save_config({"history": history})
 
         self._refresh(); self._summary()
-        status = f"Done — {renamed} renamed"
+        op_done = "copied" if copy_mode else "renamed"
+        status = f"Done — {renamed} {op_done}"
         if sub_count:  status += f", {sub_count} subtitle(s)"
         if errors:     status += f", {errors} error(s)"
         if removed_folders: status += f", {len(removed_folders)} empty folder(s) deleted"
         self.app.set_status(status)
-        self._log("Rename Complete", "\n".join(log_lines))
+        self._log(f"{'Copy' if copy_mode else 'Rename'} Complete", "\n".join(log_lines))
 
     def _log(self, title, content):
         win = Toplevel(self); win.title(title)
@@ -1463,72 +1443,15 @@ class TVTab(BaseTab):
     def __init__(self, parent, app):
         _tv_dest = load_config().get("tv_dest", "")
         self._dest_var_ref = StringVar(value=_tv_dest)
-        _saved_source = load_config().get("tv_source", "TVmaze")
-        self.tv_source = StringVar(value=_saved_source)
         super().__init__(parent, app, self._dest_var_ref, ACCENT)
         # Save whenever the destination changes
         self._dest_var_ref.trace_add("write",
             lambda *_: save_config({"tv_dest": self._dest_var_ref.get().strip()}))
-        # Save source selection
-        self.tv_source.trace_add("write",
-            lambda *_: save_config({"tv_source": self.tv_source.get()}))
 
     def _toolbar(self, p):
         super()._toolbar(p)
-        # ── Source selector (right-side of toolbar) ──────────────────────
-        sel_frame = Frame(p, bg=BG_PANEL)
-        sel_frame.pack(side=RIGHT, padx=(0, 12))
-
-        Label(sel_frame, text="SOURCE", font=("Segoe UI", 7, "bold"),
-              fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=(0, 6))
-
-        SOURCES = [
-            ("TVmaze",   "🔵"),
-            ("TheTVDB",  "🟠"),
-        ]
-
-        self._src_btns = {}
-        pill_frame = Frame(sel_frame, bg=BG_SURFACE, bd=0,
-                           highlightthickness=1, highlightbackground=BORDER)
-        pill_frame.pack(side=LEFT)
-
-        for i, (name, icon) in enumerate(SOURCES):
-            is_first = i == 0
-            is_last  = i == len(SOURCES) - 1
-            padx = (6 if is_first else 2, 6 if is_last else 2)
-
-            btn = Label(pill_frame, text=f"{icon} {name}",
-                        font=("Segoe UI", 8, "bold"),
-                        bg=BG_SURFACE, fg=MUTED,
-                        cursor="hand2", padx=10, pady=4)
-            btn.pack(side=LEFT, padx=padx, pady=3)
-            self._src_btns[name] = btn
-
-            def on_click(e, n=name):
-                self._set_source(n)
-            btn.bind("<Button-1>", on_click)
-            btn.bind("<Enter>",    lambda e, b=btn: b.configure(fg=WHITE) if b.cget("fg") != "#000000" else None)
-            btn.bind("<Leave>",    lambda e, n=name, b=btn: self._restore_btn_color(n, b))
-
-            if i < len(SOURCES) - 1:
-                Frame(pill_frame, bg=BORDER, width=1).pack(side=LEFT, fill=Y, pady=4)
-
-        # Apply initial selection styling
-        self.after(50, lambda: self._set_source(self.tv_source.get()))
-
-    def _set_source(self, name: str):
-        self.tv_source.set(name)
-        for n, b in self._src_btns.items():
-            if n == name:
-                b.configure(fg="#000000", bg=ACCENT)
-            else:
-                b.configure(fg=MUTED, bg=BG_SURFACE)
-
-    def _restore_btn_color(self, name: str, btn: Label):
-        if self.tv_source.get() == name:
-            btn.configure(fg="#000000", bg=ACCENT)
-        else:
-            btn.configure(fg=MUTED, bg=BG_SURFACE)
+        Label(p, text="Lookup via TV Maze", font=("Segoe UI", 8),
+              fg=MUTED, bg=BG_PANEL).pack(side=RIGHT, padx=14)
 
     def _lookup_label(self): return "🔍  Lookup Episodes"
     def _parse(self, f):     return parse_tv_filename(f)
@@ -1536,41 +1459,23 @@ class TVTab(BaseTab):
 
     def _do_lookup(self, entry):
         p = entry["parsed"]
-        source = self.tv_source.get()
-
-        if source == "TheTVDB":
-            results = tvdb_search_shows(p["show_name"])
-            if not results:
-                raise LookupNotFoundError(
-                    f"Show not found: '{p['show_name']}'", p["show_name"])
-            top = results[0]
-            name_match = top["name"].lower().strip()
-            query_norm = p["show_name"].lower().strip()
-            if name_match != query_norm and len(results) > 1:
-                raise LookupNotFoundError(
-                    f"Multiple matches for '{p['show_name']}'", p["show_name"])
-            self._finish_tv_lookup(entry, top["id"], top["name"])
-        else:
-            # TVmaze (default)
-            results = tvmaze_search_shows(p["show_name"])
-            if not results:
-                raise LookupNotFoundError(
-                    f"Show not found: '{p['show_name']}'", p["show_name"])
-            top  = results[0]
-            name_match = top["name"].lower().strip()
-            query_norm = p["show_name"].lower().strip()
-            if name_match != query_norm and len(results) > 1:
-                raise LookupNotFoundError(
-                    f"Multiple matches for '{p['show_name']}'", p["show_name"])
-            self._finish_tv_lookup(entry, top["id"], top["name"])
+        # Try exact single-search first; fall back to multi-search picker
+        results = tvmaze_search_shows(p["show_name"])
+        if not results:
+            raise LookupNotFoundError(
+                f"Show not found: '{p['show_name']}'", p["show_name"])
+        # Use top result — if confidence is low (name differs a lot), show picker
+        top  = results[0]
+        name_match = top["name"].lower().strip()
+        query_norm = p["show_name"].lower().strip()
+        if name_match != query_norm and len(results) > 1:
+            raise LookupNotFoundError(
+                f"Multiple matches for '{p['show_name']}'", p["show_name"])
+        self._finish_tv_lookup(entry, top["id"], top["name"])
 
     def _finish_tv_lookup(self, entry, show_id: int, show_name: str):
         p  = entry["parsed"]
-        source = self.tv_source.get()
-        if source == "TheTVDB":
-            ep = tvdb_get_episode(show_id, p["season"], p["episode"])
-        else:
-            ep = tvmaze_get_episode_by_id(show_id, p["season"], p["episode"])
+        ep = tvmaze_get_episode_by_id(show_id, p["season"], p["episode"])
         media = get_media_info(entry["path"])
         entry["media_info"] = media
         # Update parsed show name to the confirmed TVmaze name
@@ -1586,17 +1491,11 @@ class TVTab(BaseTab):
         ]
 
     def _show_picker(self, entry, query: str):
-        source = self.tv_source.get()
-        if source == "TheTVDB":
-            def search_fn(q):
-                return tvdb_search_shows(q)
-            title = "TV Show Not Found — Pick a Match  (TheTVDB)"
-        else:
-            def search_fn(q):
-                return tvmaze_search_shows(q)
-            title = "TV Show Not Found — Pick a Match  (TVmaze)"
+        def search_fn(q):
+            return tvmaze_search_shows(q)
         dlg = SearchPickerDialog(
-            self.app, title, entry["path"].name, query, search_fn, self.color)
+            self.app, "TV Show Not Found — Pick a Match",
+            entry["path"].name, query, search_fn, self.color)
         return dlg
 
     def _do_lookup_with_choice(self, entry, choice: dict):
@@ -1608,6 +1507,12 @@ class TVTab(BaseTab):
         if self.opt_video_codec.get(): parts.append("HEVC")
         if self.opt_audio_codec.get(): parts.append("5.1")
         self.preview_label.config(text=" - ".join(parts)+".mkv")
+        # Update apply button label to reflect current mode
+        try:
+            lbl = "⎘  Copy & Rename" if self.opt_copy_mode.get() else "✓  Apply & Rename"
+            self.apply_btn.configure(text=lbl)
+        except Exception:
+            pass
 
 
 # ── Movies Tab ────────────────────────────────────────────────────────────────
@@ -1615,81 +1520,17 @@ class MoviesTab(BaseTab):
     def __init__(self, parent, app):
         _movie_dest = load_config().get("movie_dest", "")
         self._dest_var_ref = StringVar(value=_movie_dest)
-        _saved_source = load_config().get("movie_source", "OMDb")
-        self.movie_source = StringVar(value=_saved_source)
         super().__init__(parent, app, self._dest_var_ref, ACCENT_BLUE)
-        # Save whenever the destination or source changes
+        # Save whenever the destination changes
         self._dest_var_ref.trace_add("write",
             lambda *_: save_config({"movie_dest": self._dest_var_ref.get().strip()}))
-        self.movie_source.trace_add("write",
-            lambda *_: save_config({"movie_source": self.movie_source.get()}))
         self._inject_api_bar()
 
-    def _toolbar(self, p):
-        super()._toolbar(p)
-        # ── Source selector (right-side of toolbar) ──────────────────────
-        sel_frame = Frame(p, bg=BG_PANEL)
-        sel_frame.pack(side=RIGHT, padx=(0, 12))
-
-        Label(sel_frame, text="SOURCE", font=("Segoe UI", 7, "bold"),
-              fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=(0, 6))
-
-        SOURCES = [
-            ("OMDb",     "🟢"),
-            ("TheTVDB",  "🟠"),
-        ]
-
-        self._src_btns = {}
-        pill_frame = Frame(sel_frame, bg=BG_SURFACE, bd=0,
-                           highlightthickness=1, highlightbackground=BORDER)
-        pill_frame.pack(side=LEFT)
-
-        for i, (name, icon) in enumerate(SOURCES):
-            is_first = i == 0
-            is_last  = i == len(SOURCES) - 1
-            padx = (6 if is_first else 2, 6 if is_last else 2)
-
-            btn = Label(pill_frame, text=f"{icon} {name}",
-                        font=("Segoe UI", 8, "bold"),
-                        bg=BG_SURFACE, fg=MUTED,
-                        cursor="hand2", padx=10, pady=4)
-            btn.pack(side=LEFT, padx=padx, pady=3)
-            self._src_btns[name] = btn
-
-            def on_click(e, n=name):
-                self._set_source(n)
-            btn.bind("<Button-1>", on_click)
-            btn.bind("<Enter>",    lambda e, b=btn: b.configure(fg=WHITE) if b.cget("fg") != "#000000" else None)
-            btn.bind("<Leave>",    lambda e, n=name, b=btn: self._restore_btn_color(n, b))
-
-            if i < len(SOURCES) - 1:
-                Frame(pill_frame, bg=BORDER, width=1).pack(side=LEFT, fill=Y, pady=4)
-
-        # Apply initial selection styling after widget is fully built
-        self.after(50, lambda: self._set_source(self.movie_source.get()))
-
-    def _set_source(self, name: str):
-        self.movie_source.set(name)
-        for n, b in self._src_btns.items():
-            if n == name:
-                b.configure(fg="#000000", bg=ACCENT_BLUE)
-            else:
-                b.configure(fg=MUTED, bg=BG_SURFACE)
-        # Show/hide OMDb key bar based on selection
-        if hasattr(self, "_omdb_bar"):
-            self._update_omdb_bar_visibility()
-
-    def _restore_btn_color(self, name: str, btn: Label):
-        if self.movie_source.get() == name:
-            btn.configure(fg="#000000", bg=ACCENT_BLUE)
-        else:
-            btn.configure(fg=MUTED, bg=BG_SURFACE)
-
     def _inject_api_bar(self):
-        """Add OMDb API key bar — only visible when OMDb is the selected source."""
+        """Add OMDb API key bar at the very top of the tab."""
         bar = Frame(self, bg=BG_PANEL)
+        # Place it before the first child (toolbar)
         bar.pack(fill=X, before=self.winfo_children()[0])
-        self._omdb_bar = bar
         Frame(bar, bg=BORDER, height=1).pack(fill=X)
 
         row = Frame(bar, bg=BG_PANEL)
@@ -1730,17 +1571,6 @@ class MoviesTab(BaseTab):
         link.bind("<Leave>", lambda e: link.configure(fg=BLUE,
             font=("Segoe UI", 8)))
 
-        # Set initial visibility and watch for source changes
-        self._update_omdb_bar_visibility()
-        self.movie_source.trace_add("write", lambda *_: self._update_omdb_bar_visibility())
-
-    def _update_omdb_bar_visibility(self):
-        """Show the OMDb key bar only when OMDb is the selected source."""
-        if self.movie_source.get() == "OMDb":
-            self._omdb_bar.pack(fill=X, before=self.winfo_children()[1])
-        else:
-            self._omdb_bar.pack_forget()
-
     def _lookup_label(self): return "🔍  Lookup Movies"
     def _parse(self, f):     return parse_movie_filename(f)
 
@@ -1749,35 +1579,22 @@ class MoviesTab(BaseTab):
         return ""
 
     def _do_lookup(self, entry):
-        p      = entry["parsed"]
-        source = self.movie_source.get()
-
-        if source == "TheTVDB":
-            results = tvdb_search_movies(p["raw_title"])
-            if not results:
-                raise LookupNotFoundError(
-                    f"Movie not found: '{p['raw_title']}'", p["raw_title"])
-            top = results[0]
-            if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
-                raise LookupNotFoundError(
-                    f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
-            full = tvdb_get_movie(top["id"])
-            self._finish_movie_lookup(entry, full)
-        else:
-            # OMDb (default)
-            key = self.api_key_var.get().strip()
-            if not key:
-                raise ValueError("Enter your OMDb API key at the top of the Movies tab")
-            results = omdb_search_movies(p["raw_title"], p.get("year"), key)
-            if not results:
-                raise LookupNotFoundError(
-                    f"Movie not found: '{p['raw_title']}'", p["raw_title"])
-            top = results[0]
-            if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
-                raise LookupNotFoundError(
-                    f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
-            full = omdb_get_movie(top["id"], key)
-            self._finish_movie_lookup(entry, full)
+        key = self.api_key_var.get().strip()
+        if not key:
+            raise ValueError("Enter your OMDb API key at the top of the Movies tab")
+        p       = entry["parsed"]
+        results = omdb_search_movies(p["raw_title"], p.get("year"), key)
+        if not results:
+            raise LookupNotFoundError(
+                f"Movie not found: '{p['raw_title']}'", p["raw_title"])
+        top = results[0]
+        # If year doesn't match or multiple plausible results, show picker
+        if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
+            raise LookupNotFoundError(
+                f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
+        # Fetch full details to confirm title
+        full = omdb_get_movie(top["id"], key)
+        self._finish_movie_lookup(entry, full)
 
     def _finish_movie_lookup(self, entry, result: dict):
         p     = entry["parsed"]
@@ -1797,27 +1614,17 @@ class MoviesTab(BaseTab):
         ]
 
     def _show_picker(self, entry, query: str):
-        source = self.movie_source.get()
-        if source == "TheTVDB":
-            def search_fn(q):
-                return tvdb_search_movies(q)
-            title = "Movie Not Found — Pick a Match  (TheTVDB)"
-        else:
-            key = self.api_key_var.get().strip()
-            def search_fn(q):
-                return omdb_search_movies(q, None, key)
-            title = "Movie Not Found — Pick a Match  (OMDb)"
+        key = self.api_key_var.get().strip()
+        def search_fn(q):
+            return omdb_search_movies(q, None, key)
         dlg = SearchPickerDialog(
-            self.app, title, entry["path"].name, query, search_fn, self.color)
+            self.app, "Movie Not Found — Pick a Match",
+            entry["path"].name, query, search_fn, self.color)
         return dlg
 
     def _do_lookup_with_choice(self, entry, choice: dict):
-        source = self.movie_source.get()
-        if source == "TheTVDB":
-            full = tvdb_get_movie(choice["id"]) if choice.get("id") else choice
-        else:
-            key  = self.api_key_var.get().strip()
-            full = omdb_get_movie(choice["id"], key) if choice.get("id") else choice
+        key  = self.api_key_var.get().strip()
+        full = omdb_get_movie(choice["id"], key) if choice.get("id") else choice
         self._finish_movie_lookup(entry, full)
 
     def _update_preview(self):
@@ -1826,6 +1633,12 @@ class MoviesTab(BaseTab):
         if self.opt_video_codec.get(): parts.append("HEVC")
         if self.opt_audio_codec.get(): parts.append("5.1")
         self.preview_label.config(text=" - ".join(parts)+".mkv")
+        # Update apply button label to reflect current mode
+        try:
+            lbl = "⎘  Copy & Rename" if self.opt_copy_mode.get() else "✓  Apply & Rename"
+            self.apply_btn.configure(text=lbl)
+        except Exception:
+            pass
 
 
 # ── History Dialog ───────────────────────────────────────────────────────────
@@ -2107,12 +1920,11 @@ class PlexBot(Tk):
         style.configure("PB.TNotebook",
                         background=BG_DARK, borderwidth=0, tabmargins=0)
         style.configure("PB.TNotebook.Tab",
-                        background=BG_DARK, foreground=MUTED,
-                        font=("Segoe UI",9), padding=[22,8], borderwidth=0)
+                        background=BG_PANEL, foreground=MUTED,
+                        font=("Segoe UI",10,"bold"), padding=[22,8], borderwidth=0)
         style.map("PB.TNotebook.Tab",
-                  background=[("selected", BG_PANEL)],
-                  foreground=[("selected", ACCENT)],
-                  font=[("selected", ("Segoe UI",11,"bold"))])
+                  background=[("selected", BG_DARK)],
+                  foreground=[("selected", ACCENT)])
 
         nb = ttk.Notebook(self, style="PB.TNotebook")
         nb.pack(fill=BOTH, expand=True)
