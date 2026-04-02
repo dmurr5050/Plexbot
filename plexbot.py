@@ -950,7 +950,7 @@ class BaseTab(Frame):
         self.after(200, self._setup_dnd)
 
     def _right_panel(self, p):
-        # Destination
+        # ── Destination ───────────────────────────────────────────────────
         Label(p, text="DESTINATION", font=("Segoe UI", 9, "bold"),
               fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(16, 4))
         df = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
@@ -965,12 +965,37 @@ class BaseTab(Frame):
         Label(p, text="Leave blank to rename in place",
               font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(2, 0))
 
-        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 8))
+        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
 
-        # ── File Mode: Move vs Copy ───────────────────────────────────────
-        Label(p, text="FILE MODE", font=("Segoe UI", 9, "bold"),
-              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(0, 6))
-        mode_frame = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1,
+        # ── Collapsible Settings section ──────────────────────────────────
+        self._settings_open = BooleanVar(value=False)
+
+        # Header row — click anywhere to toggle
+        settings_hdr = Frame(p, bg=BG_PANEL, cursor="hand2")
+        settings_hdr.pack(fill=X, padx=16, pady=(6, 0))
+
+        self._settings_arrow = Label(settings_hdr, text="▶", font=("Segoe UI", 8, "bold"),
+                                     fg=self.color, bg=BG_PANEL, width=2, anchor=W)
+        self._settings_arrow.pack(side=LEFT)
+        hdr_lbl = Label(settings_hdr, text="SETTINGS", font=("Segoe UI", 9, "bold"),
+                        fg=self.color, bg=BG_PANEL)
+        hdr_lbl.pack(side=LEFT)
+        Label(settings_hdr, text="  File mode · Filename tags",
+              font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(side=LEFT)
+
+        for w in (settings_hdr, self._settings_arrow, hdr_lbl,
+                  settings_hdr.winfo_children()[-1]):
+            w.bind("<Button-1>", lambda e: self._toggle_settings())
+
+        # Collapsible body
+        self._settings_body = Frame(p, bg=BG_PANEL)
+        # (not packed yet — collapsed by default)
+
+        # ── File Mode inside body ─────────────────────────────────────────
+        sb = self._settings_body
+        Label(sb, text="FILE MODE", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(10, 4))
+        mode_frame = Frame(sb, bg=BG_SURFACE, bd=0, highlightthickness=1,
                            highlightbackground=BORDER)
         mode_frame.pack(fill=X, padx=16)
         self._mode_btns = {}
@@ -1005,22 +1030,23 @@ class BaseTab(Frame):
                   fg="#000" if is_sel else MUTED,
                   bg=btn_frame["bg"], anchor=W, wraplength=190, justify=LEFT).pack(anchor=W)
             self._mode_btns[mode] = (btn_frame, inner,
-                                     inner.winfo_children()[0],  # icon label
-                                     *txt_col.winfo_children())  # text labels
-            for w in [btn_frame, inner, txt_col] + list(inner.winfo_children()) + list(txt_col.winfo_children()):
+                                     inner.winfo_children()[0],
+                                     *txt_col.winfo_children())
+            for w in ([btn_frame, inner, txt_col]
+                      + list(inner.winfo_children())
+                      + list(txt_col.winfo_children())):
                 w.bind("<Button-1>", lambda e, m=mode: self._set_file_mode(m))
 
-        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(4, 0))
-
-        # Checkboxes
-        Label(p, text="INCLUDE IN FILENAME", font=("Segoe UI", 9, "bold"),
-              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(0, 6))
-        cbf = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
+        # ── Include in Filename inside body ───────────────────────────────
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
+        Label(sb, text="INCLUDE IN FILENAME", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
+        cbf = Frame(sb, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
         cbf.pack(fill=X, padx=16)
         for txt, var, tip in [
             ("  Video Resolution  (e.g. 1080p)", self.opt_resolution,  "Append resolution tag"),
             ("  Video Codec       (e.g. HEVC)",  self.opt_video_codec, "Append video codec tag"),
-            ("  Audio Channels    (e.g. 5.1)",   self.opt_audio_codec, "Append audio channel count like 5.1, 7.1, 2.0"),
+            ("  Audio Channels    (e.g. 5.1)",   self.opt_audio_codec, "Append audio channel count"),
         ]:
             row = Frame(cbf, bg=BG_SURFACE)
             row.pack(fill=X, padx=10, pady=3)
@@ -1032,25 +1058,25 @@ class BaseTab(Frame):
             cb.pack(side=LEFT)
             Tooltip(cb, tip)
 
-        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
-
-        # Preview
-        Label(p, text="FORMAT PREVIEW", font=("Segoe UI", 9, "bold"),
-              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(10, 6))
-        pbox = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
-        pbox.pack(fill=X, padx=16)
+        # ── Format preview inside body ────────────────────────────────────
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(8, 0))
+        Label(sb, text="FORMAT PREVIEW", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
+        pbox = Frame(sb, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
+        pbox.pack(fill=X, padx=16, pady=(0, 10))
         self.preview_label = Label(pbox, text="", font=("Consolas", 8),
-                                   fg=SUCCESS, bg=BG_SURFACE, wraplength=230,
+                                   fg=SUCCESS, bg=BG_SURFACE, wraplength=220,
                                    justify=LEFT, padx=10, pady=10)
         self.preview_label.pack()
         self._update_preview()
 
-        Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=12)
+        self._action_divider = Frame(p, bg=BORDER, height=1)
+        self._action_divider.pack(fill=X, padx=16, pady=(6, 0))
 
-        # Buttons
+        # ── Action buttons ────────────────────────────────────────────────
         self.lookup_btn = self._big_btn(p, self._lookup_label(), self._start_lookup,
                                         self.color, "#000")
-        self.lookup_btn.pack(fill=X, padx=16, pady=(0, 8))
+        self.lookup_btn.pack(fill=X, padx=16, pady=(10, 6))
 
         self.prog_frame = Frame(p, bg=BG_PANEL)
         self.prog_frame.pack(fill=X, padx=16, pady=(0, 6))
@@ -1066,24 +1092,18 @@ class BaseTab(Frame):
 
         self.apply_btn = self._big_btn(p, "✓  Apply & Rename", self._apply_rename,
                                        SUCCESS, "#000", state=DISABLED)
-        self.apply_btn.pack(fill=X, padx=16, pady=(0, 6))
+        self.apply_btn.pack(fill=X, padx=16, pady=(0, 8))
 
         # Keep apply button label in sync with file mode
         def _update_apply_label(*_):
             is_copy = self.file_mode.get() == "copy"
-            lbl = "⎘  Apply & Copy" if is_copy else "✓  Apply & Rename"
-            if self.apply_btn.cget("bg") != BG_SURFACE:   # only if enabled
-                self.apply_btn.configure(text=lbl)
-            else:
-                self.apply_btn.configure(text=lbl)
+            self.apply_btn.configure(
+                text="⎘  Apply & Copy" if is_copy else "✓  Apply & Rename")
         self.file_mode.trace_add("write", _update_apply_label)
-
-        self.dryrun_btn = self._big_btn(p, "👁  Preview Only", self._dry_run,
-                                        BLUE, WHITE, state=DISABLED)
-        self.dryrun_btn.pack(fill=X, padx=16, pady=(0, 6))
 
         Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=6)
 
+        # ── Summary ───────────────────────────────────────────────────────
         Label(p, text="SUMMARY", font=("Segoe UI", 9, "bold"),
               fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(0, 6))
         sf = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
@@ -1092,6 +1112,19 @@ class BaseTab(Frame):
         self.sum_ready = self._srow(sf, "Matched",     "0", SUCCESS)
         self.sum_skip  = self._srow(sf, "Unmatched",   "0", MUTED)
         self.sum_error = self._srow(sf, "Errors",      "0", ERROR)
+
+    def _toggle_settings(self):
+        """Expand or collapse the Settings body."""
+        if self._settings_open.get():
+            self._settings_body.pack_forget()
+            self._settings_arrow.configure(text="▶")
+            self._settings_open.set(False)
+        else:
+            # Pack the body just before the divider that precedes the action buttons.
+            # We stored a reference to that divider as self._action_divider.
+            self._settings_body.pack(fill=X, before=self._action_divider)
+            self._settings_arrow.configure(text="▼")
+            self._settings_open.set(True)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def _set_file_mode(self, mode: str):
@@ -1230,7 +1263,6 @@ class BaseTab(Frame):
         self.file_entries.clear()
         self._refresh(); self._summary()
         self._disable_btn(self.apply_btn)
-        self._disable_btn(self.dryrun_btn)
         self.drop_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.drop_overlay.lift()
         self.app.set_status("Cleared")
@@ -1329,7 +1361,6 @@ class BaseTab(Frame):
         self.lookup_running = True
         self._disable_btn(self.lookup_btn)
         self._disable_btn(self.apply_btn)
-        self._disable_btn(self.dryrun_btn)
         self.progress.pack(fill=X, pady=(0,4))
         self.prog_label.pack(fill=X)
         threading.Thread(target=self._worker, daemon=True).start()
@@ -1389,7 +1420,6 @@ class BaseTab(Frame):
         self._enable_btn(self.lookup_btn, self._start_lookup)
         if any(e["status"]=="done" for e in self.file_entries):
             self._enable_btn(self.apply_btn, self._apply_rename)
-            self._enable_btn(self.dryrun_btn, self._dry_run)
         ready  = sum(1 for e in self.file_entries if e["status"]=="done")
         errors = sum(1 for e in self.file_entries if e["status"]=="error")
         self.app.set_status(f"Lookup complete — {ready} ready, {errors} errors")
