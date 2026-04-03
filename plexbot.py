@@ -314,6 +314,14 @@ def parse_movie_filename(filename: str):
 def safe_name(s: str) -> str:
     return re.sub(r'[\\/:*?"<>|]', '', s).strip()
 
+def strip_year_from_query(name: str) -> str:
+    """Remove a trailing or parenthesised year from a show/movie name."""
+    # Remove (YYYY) or [YYYY] anywhere
+    name = re.sub(r'[\(\[]\s*(19|20)\d{2}\s*[\)\]]', '', name)
+    # Remove bare year at end:  "Show Name 2005" → "Show Name"
+    name = re.sub(r'\s+(19|20)\d{2}\s*$', '', name)
+    return name.strip()
+
 # ── Media Info via ffprobe ────────────────────────────────────────────────────
 _VIDEO_CODEC_MAP = {
     "hevc": "HEVC", "h265": "HEVC", "h264": "H.264", "avc": "H.264",
@@ -882,6 +890,7 @@ class BaseTab(Frame):
         self.opt_video_codec = BooleanVar(value=True)
         self.opt_audio_codec = BooleanVar(value=True)
         self.file_mode       = StringVar(value="move")   # "move" or "copy"
+        self.opt_strip_year  = BooleanVar(value=True)    # strip year from search query
         self._build()
 
     def _build(self):
@@ -1057,6 +1066,25 @@ class BaseTab(Frame):
                              command=self._update_preview)
             cb.pack(side=LEFT)
             Tooltip(cb, tip)
+
+        # ── Search options inside body ────────────────────────────────────
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(8, 0))
+        Label(sb, text="SEARCH OPTIONS", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
+        sof = Frame(sb, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
+        sof.pack(fill=X, padx=16)
+        so_row = Frame(sof, bg=BG_SURFACE)
+        so_row.pack(fill=X, padx=10, pady=3)
+        so_cb = Checkbutton(so_row,
+                            text="  Strip year from search query",
+                            variable=self.opt_strip_year, font=FONT_SMALL,
+                            fg=TEXT, bg=BG_SURFACE, selectcolor=BG_DARK,
+                            activebackground=BG_SURFACE, activeforeground=TEXT,
+                            highlightthickness=0, bd=0, cursor="hand2")
+        so_cb.pack(side=LEFT)
+        Tooltip(so_cb,
+                "When a show/movie name contains a year (e.g. 'The Office (2005)')\n"
+                "strip it before searching so results are not filtered too narrowly.")
 
         # ── Format preview inside body ────────────────────────────────────
         Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(8, 0))
@@ -1303,7 +1331,7 @@ class BaseTab(Frame):
         orig = Label(row, text=entry["path"].name, font=FONT_MONO_SM,
                      fg=TEXT_DIM, bg=bg, anchor=W, width=42)
         orig.pack(side=LEFT, padx=(2,0))
-        Tooltip(orig, str(entry["path"]))
+        Tooltip(orig, str(entry["path"]) + "\n\nRight-click for manual search")
 
         Label(row, text=" → ", font=FONT_SMALL, fg=MUTED, bg=bg).pack(side=LEFT)
 
@@ -1325,6 +1353,33 @@ class BaseTab(Frame):
         Label(row, text=pt, font=("Segoe UI",8,"bold"),
               fg=pf, bg=pb, padx=8, pady=2).pack(side=RIGHT, padx=8)
         Frame(self.rows_frame, bg=BORDER, height=1).pack(fill=X)
+
+        # ── Right-click context menu ───────────────────────────────────────
+        def _show_ctx(event, e=entry):
+            if e["status"] == "loading":
+                return
+            menu = Menu(self, tearoff=0, bg=BG_SURFACE, fg=TEXT,
+                        activebackground=self.color, activeforeground="#000",
+                        font=FONT_SMALL, bd=0, relief="flat")
+            menu.add_command(
+                label="🔍  Manual Search…",
+                command=lambda: self._manual_search(e))
+            if e["status"] in ("done", "error"):
+                menu.add_command(
+                    label="🔄  Re-run Auto Lookup",
+                    command=lambda: self._rerun_single(e))
+            menu.add_separator()
+            menu.add_command(
+                label="✕  Remove from list",
+                command=lambda: self._remove(idx))
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+        for w in [row] + list(row.winfo_children()):
+            w.bind("<Button-3>", _show_ctx)          # Windows / Linux right-click
+            w.bind("<Control-Button-1>", _show_ctx)  # macOS ctrl+click
 
         # ── Subtitle sub-rows ──────────────────────────────────────────────
         for sub in entry.get("subtitles", []):
@@ -1352,6 +1407,73 @@ class BaseTab(Frame):
                   side=LEFT, fill=X, expand=True, padx=(0,8))
 
             Frame(self.rows_frame, bg="#1a1a28", height=1).pack(fill=X)
+
+    # ── Manual search (right-click) ───────────────────────────────────────────
+    def _manual_search(self, entry):
+        """Open the picker dialog pre-filled with the original filename's parsed name."""
+        if self.lookup_running:
+            messagebox.showinfo("Lookup Running",
+                "Please wait for the current lookup to finish.", parent=self.app)
+            return
+        # Derive the initial query: use parsed name if available, else raw filename stem
+        parsed = entry.get("parsed")
+        if parsed:
+            query = parsed.get("show_name") or parsed.get("raw_title") or entry["path"].stem
+        else:
+            query = entry["path"].stem
+        dlg = self._show_picker(entry, query)
+        if dlg and dlg.chosen:
+            entry["status"] = "loading"
+            self._refresh()
+            def do_it(e=entry, choice=dlg.chosen):
+                try:
+                    self._do_lookup_with_choice(e, choice)
+                except Exception as ex:
+                    e["status"] = "error"
+                    e["error_msg"] = str(ex)
+                self.after(0, self._refresh)
+                self.after(0, self._summary)
+                if any(fe["status"] == "done" for fe in self.file_entries):
+                    self.after(0, lambda: self._enable_btn(self.apply_btn, self._apply_rename))
+            threading.Thread(target=do_it, daemon=True).start()
+
+    def _rerun_single(self, entry):
+        """Re-run the auto lookup for a single entry on a background thread."""
+        if self.lookup_running:
+            messagebox.showinfo("Lookup Running",
+                "Please wait for the current lookup to finish.", parent=self.app)
+            return
+        entry["status"] = "loading"
+        self._refresh()
+        def do_it(e=entry):
+            try:
+                self._do_lookup(e)
+            except LookupNotFoundError as ex:
+                event  = threading.Event()
+                chosen = [None]
+                def show_picker(e=e, ex=ex, event=event, chosen=chosen):
+                    dlg = self._show_picker(e, str(ex.query))
+                    chosen[0] = dlg.chosen if dlg else None
+                    event.set()
+                self.after(0, show_picker)
+                event.wait()
+                if chosen[0]:
+                    try:
+                        self._do_lookup_with_choice(e, chosen[0])
+                    except Exception as ex2:
+                        e["status"] = "error"
+                        e["error_msg"] = str(ex2)
+                else:
+                    e["status"] = "error"
+                    e["error_msg"] = "Skipped by user"
+            except Exception as ex:
+                e["status"] = "error"
+                e["error_msg"] = str(ex)
+            self.after(0, self._refresh)
+            self.after(0, self._summary)
+            if any(fe["status"] == "done" for fe in self.file_entries):
+                self.after(0, lambda: self._enable_btn(self.apply_btn, self._apply_rename))
+        threading.Thread(target=do_it, daemon=True).start()
 
     # ── Lookup ────────────────────────────────────────────────────────────────
     def _start_lookup(self):
@@ -1654,20 +1776,24 @@ class TVTab(BaseTab):
         p   = entry["parsed"]
         src = self._source_var.get()
 
+        query = p["show_name"]
+        if self.opt_strip_year.get():
+            query = strip_year_from_query(query)
+
         if src == "TheTVDB":
-            results = tvdb_search_shows(p["show_name"])
+            results = tvdb_search_shows(query)
         else:
-            results = tvmaze_search_shows(p["show_name"])
+            results = tvmaze_search_shows(query)
 
         if not results:
             raise LookupNotFoundError(
-                f"Show not found: '{p['show_name']}'", p["show_name"])
+                f"Show not found: '{query}'", query)
         top        = results[0]
         name_match = top["name"].lower().strip()
-        query_norm = p["show_name"].lower().strip()
+        query_norm = query.lower().strip()
         if name_match != query_norm and len(results) > 1:
             raise LookupNotFoundError(
-                f"Multiple matches for '{p['show_name']}'", p["show_name"])
+                f"Multiple matches for '{query}'", query)
         self._finish_tv_lookup(entry, top["id"], top["name"])
 
     def _finish_tv_lookup(self, entry, show_id, show_name: str):
@@ -1697,6 +1823,9 @@ class TVTab(BaseTab):
             search_fn = tvdb_search_shows
         else:
             search_fn = tvmaze_search_shows
+        # Apply strip-year to picker's initial query too
+        if self.opt_strip_year.get():
+            query = strip_year_from_query(query)
         dlg = SearchPickerDialog(
             self.app, "TV Show Not Found — Pick a Match",
             entry["path"].name, query, search_fn, self.color)
@@ -1830,29 +1959,35 @@ class MoviesTab(BaseTab):
         src = self._source_var.get()
         p   = entry["parsed"]
 
+        query = p["raw_title"]
+        if self.opt_strip_year.get():
+            query = strip_year_from_query(query)
+        # When stripping year for search, still pass the parsed year for filtering
+        search_year = p.get("year") if not self.opt_strip_year.get() else None
+
         if src == "TheTVDB":
-            results = tvdb_search_movies(p["raw_title"], p.get("year"))
+            results = tvdb_search_movies(query, search_year)
             if not results:
                 raise LookupNotFoundError(
-                    f"Movie not found: '{p['raw_title']}'", p["raw_title"])
+                    f"Movie not found: '{query}'", query)
             top = results[0]
-            if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
+            if search_year and top["year"] != str(search_year) and len(results) > 1:
                 raise LookupNotFoundError(
-                    f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
+                    f"Multiple matches for '{query}'", query)
             full = tvdb_get_movie(top["id"])
             self._finish_movie_lookup(entry, full)
         else:
             key = self.api_key_var.get().strip()
             if not key:
                 raise ValueError("Enter your OMDb API key at the top of the Movies tab")
-            results = omdb_search_movies(p["raw_title"], p.get("year"), key)
+            results = omdb_search_movies(query, search_year, key)
             if not results:
                 raise LookupNotFoundError(
-                    f"Movie not found: '{p['raw_title']}'", p["raw_title"])
+                    f"Movie not found: '{query}'", query)
             top = results[0]
-            if p.get("year") and top["year"] != str(p["year"]) and len(results) > 1:
+            if search_year and top["year"] != str(search_year) and len(results) > 1:
                 raise LookupNotFoundError(
-                    f"Multiple matches for '{p['raw_title']}'", p["raw_title"])
+                    f"Multiple matches for '{query}'", query)
             full = omdb_get_movie(top["id"], key)
             self._finish_movie_lookup(entry, full)
 
@@ -1874,6 +2009,9 @@ class MoviesTab(BaseTab):
 
     def _show_picker(self, entry, query: str):
         src = self._source_var.get()
+        # Apply strip-year to picker's initial query too
+        if self.opt_strip_year.get():
+            query = strip_year_from_query(query)
         if src == "TheTVDB":
             search_fn = lambda q: tvdb_search_movies(q, None)
         else:
