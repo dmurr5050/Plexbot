@@ -1,148 +1,237 @@
-🎬 PlexBot v1.0
-Automatic Media File Renamer for Plex
-Powered by DAT — Dans Automation Tools
+# 🎬 PlexBot v1.06
+**Automatic Media File Renamer for Plex**  
+*Powered by DAT — Dans Automation Tools*
 
+> Stop renaming files by hand. PlexBot does it in seconds.  
+> Tested with 4,000+ files renamed in a single session.
 
-Stop renaming files by hand. PlexBot does it in seconds.
+---
 
+## What is PlexBot?
 
-<img width="1095" height="788" alt="image" src="https://github.com/user-attachments/assets/9666877b-9323-46c1-b1fb-b97433556f9e" />
+PlexBot is a desktop application that takes your messy downloaded video filenames and automatically renames them into clean, Plex-compatible formats. It looks up episode titles and movie names from multiple online databases, optionally tags files with resolution and codec info, organises them into the correct folder structure, moves them to your Plex library, and handles subtitle files alongside the video — all running in parallel so large batches complete fast.
 
+---
 
-What is PlexBot?
-PlexBot is a FileBot-style desktop application that takes your messy downloaded video filenames and automatically renames them into clean, Plex-compatible formats. It looks up episode titles and movie names from online databases, optionally tags files with resolution and codec info, moves them to your Plex library folders, and handles subtitle files alongside the video — all with a live preview before anything is changed.
+## Features
 
+| Feature | Details |
+|---|---|
+| 📺 TV Show renaming | Looks up episode titles via **TVmaze** or **TheTVDB** |
+| 🎬 Movie renaming | Looks up titles and years via **OMDb** or **TheTVDB** |
+| 🔤 Subtitle renaming | Renames and moves `.srt`, `.ass`, `.vtt` and more, preserving language tags |
+| 🏷️ Media tags | Optionally appends resolution, video codec, and audio channels to filenames |
+| 📁 Drag and drop | Drop files or whole folders directly onto the app |
+| 🔁 Recursive scan | Scans all subfolders automatically |
+| ⚡ Parallel lookups | Configurable 5–30 concurrent threads for lookups and renames |
+| 🎯 Smart grouping | TV: one show-search per unique show. Movies: one search per unique title |
+| 🔍 Smart picker | Centred search dialog when auto-match isn't confident |
+| 🖱️ Right-click menu | Manual search or retry lookup on any file |
+| 📋 Rename history | Instant-open even with 4,000+ entries (virtual rendering) |
+| 💾 Saved settings | All preferences remembered between sessions |
+| 🧹 Folder cleanup | Removes junk sidecar files and empty folders |
+| ✂️ Move or Copy mode | Move files or keep originals and make a renamed copy |
+| ❓ In-app Help | Full documentation embedded — no internet needed |
 
+---
 
-Features at a Glance
-FeatureDetails📺 TV Show renamingLooks up episode titles via TVmaze🎬 Movie renamingLooks up titles and years via OMDb🔤 Subtitle renamingRenames and moves .srt, .ass, .vtt and more alongside the video🏷️ Media tagsOptionally appends resolution, video codec, and audio channels to filenames📁 Drag and dropDrop files or whole folders directly onto the app🔁 Recursive scanScans all subfolders automatically👁️ Dry run previewSee exactly what will change before applying anything🔍 Smart pickerA search dialog lets you pick the right match when results are ambiguous📋 Rename historyEvery rename is logged and searchable💾 Saved settingsDestination folders and API key remembered between sessions🗑️ Empty folder cleanupRemoves leftover empty folders after moving files out
+## How It Works
 
-How It Works
-TV Shows Tab
-PlexBot reads the filename and extracts the show name, season, and episode number from patterns like:
-Happys.Place.S02E13.1080p.HEVC.x265-MeGusta.mkv
-It queries TVmaze for the episode title and renames the file to:
-Happy's Place - S02E13 - A New Chapter - 1080p - HEVC - 5.1.mkv
-Files are moved into a subfolder named after the show inside your chosen destination:
-D:\Plex Library\TV Shows\
-  └── Happy's Place\
-        ├── Happy's Place - S02E13 - A New Chapter - 1080p - HEVC - 5.1.mkv
-        └── Happy's Place - S02E13 - A New Chapter.en.srt
-Movies Tab
-PlexBot extracts the movie title and year from filenames like:
+### TV Shows
+
+Input:
+```
+Band.of.Brothers.S01E01.720p.mkv
+```
+
+Output folder structure:
+```
+TV Shows\
+  └── Band of Brothers (2001)\
+        └── Season 01\
+              ├── Band of Brothers (2001) - S01E01 - Currahee - 1080p - HEVC - 5.1.mkv
+              └── Band of Brothers (2001) - S01E01 - Currahee.en.srt
+```
+
+**Smart grouping:** 20 episodes of one show = 1 show search + 20 parallel episode fetches, not 20 separate searches.
+
+### Movies
+
+Input:
+```
 Inception.2010.1080p.BluRay.x264.mkv
-The.Matrix.1999.REMASTERED.mkv
-It queries OMDb to confirm the exact title and release year, then renames to:
-Inception (2010) - 1080p - H.264 - 5.1.mkv
-Movies are placed directly in your destination folder with no subfolder.
+```
 
-Output Format
-TV Shows
-Show Name - S01E02 - Episode Title - 1080p - HEVC - 5.1.mkv
-Show Name - S01E02 - Episode Title.en.srt
-Show Name - S01E02 - Episode Title.fr.srt
-Movies
-Movie Title (2024) - 1080p - HEVC - 5.1.mkv
-Movie Title (2024).en.srt
-The resolution, video codec, and audio channels tags are each individually toggleable via checkboxes in the app. Turn off any you do not need.
+Output folder structure:
+```
+Movies\
+  └── Inception (2010)\
+        ├── Inception (2010) - 1080p - H.264 - 5.1.mkv
+        └── Inception (2010).en.srt
+```
 
-Supported File Types
-Video
-.mkv .mp4 .avi .mov .m4v .wmv .ts .m2ts .mpg .mpeg
-Subtitles
-.srt .sub .ass .ssa .vtt .idx .sup .pgs
+**Performance:** All unique titles searched in parallel. Duplicate titles (same movie, multiple files) only searched once per session. Confident matches skip the redundant detail API call.
 
-Getting Started
+---
 
-Go to the Releases page
-Download PlexBot.exe
-Double-click to run — no installation needed
+## Supported File Types
 
-Option A — Run from Python source
-Requirements: Python 3.10 or newer
-bashpip install requests tkinterdnd2
+**Video:** `.mkv` `.mp4` `.avi` `.mov` `.m4v` `.wmv` `.ts` `.m2ts` `.mpg` `.mpeg`
+
+**Subtitles:** `.srt` `.sub` `.ass` `.ssa` `.vtt` `.idx` `.sup` `.pgs`
+
+---
+
+## Getting Started
+
+### Option A — Run the EXE
+1. Download `PlexBot.exe` and `plexbot.ico` from the Releases page — keep both in the same folder
+2. Double-click to run — no installation needed
+
+### Option B — Run from Python source
+```bash
+pip install requests tkinterdnd2
 python plexbot.py
-Optional but recommended: Install FFmpeg to enable resolution and codec detection. On Windows you can run winget install ffmpeg. Without it the app still renames files correctly, just without the technical tags.
+```
+Optional: `winget install ffmpeg` — enables resolution/codec tag detection.
 
-Option B — Build the EXE yourself
+### Option C — Build the EXE yourself
+1. Put `plexbot.py`, `plexbot.ico`, and `Build_exe.bat` in the same folder
+2. Double-click `Build_exe.bat` — `PlexBot.exe` appears in ~2 minutes
 
-Put plexbot.py, plexbot.ico, and build_exe.bat in the same folder
-Double-click build_exe.bat
-Wait 1 to 3 minutes — PlexBot.exe appears in the same folder, ready to use or share
+---
 
+## API Keys
 
-API Keys
-PlexBot uses two free online databases:
-TVmaze — TV Shows
-No API key required. TVmaze is a free, public API and works straight away.
-OMDb — Movies
-A free API key is required (1,000 lookups per day on the free tier).
+| Source | Setup |
+|---|---|
+| TVmaze | No key needed |
+| TheTVDB | Built-in key — no setup required |
+| OMDb | Free key required (1,000 lookups/day) — [omdbapi.com/apikey.aspx](http://www.omdbapi.com/apikey.aspx) |
 
-Go to omdbapi.com/apikey.aspx
-Select the Free tier and enter your email address
-Your key arrives by email almost immediately
-Open PlexBot, go to the Movies tab, and paste the key into the OMDB API KEY field at the top
+---
 
-The key is saved automatically and reloaded every time the app opens. You only need to enter it once.
+## Settings Panel
 
-Configuration
-PlexBot saves all settings automatically to:
-C:\Users\YourName\Documents\PlexBot\plexbot_config.json
-This file stores:
+Click **▶ SETTINGS** in the right-hand panel to expand (collapses by default).
 
-Your OMDb API key
-TV Shows destination folder
-Movies destination folder
-Full rename history
+- **File Mode** — Move (default) or Copy & Keep Original
+- **Folder Structure** — Toggle year in TV folder/filename; toggle per-movie subfolder for movies
+- **Include in Filename** — Video Resolution, Video Codec, Audio Channels (each toggleable)
+- **Strip year from search query** — removes years from search terms (on by default)
+- **Concurrent lookups** — 5 / 10 / 15 / 20 / 25 / 30 threads (default 5) — used for both lookups and renames
 
-The folder and file are created automatically on first run. Destination fields start blank and are saved the moment you select a folder.
+---
 
-Rename History
-Every file renamed by PlexBot is recorded in the history log. Click the History button in the top-right corner of the app to open the history window, where you can:
+## Performance — Large Batches
 
-See the original filename and the new Plex-formatted name side by side
-Filter by All, TV, or Movie
-Search by any part of the filename
-Clear the full history when you no longer need it
+| Area | Optimisation |
+|---|---|
+| TV lookups | One show-search per unique show; all searches + fetches parallel |
+| Movie lookups | All unique titles parallel; duplicate cache; skip redundant detail fetch |
+| Lookup UI | Debounced at 100ms — stays responsive during 100+ concurrent threads |
+| Rename UI | Debounced at 150ms — stays responsive during 200+ parallel renames |
+| History dialog | Virtual canvas rendering — instant open with 4,000+ entries |
+| Apply button | Stays disabled until full batch completes |
 
+---
 
-Smart Lookup Picker
-When PlexBot cannot confidently match a filename to a single result, it pauses and opens a search dialog so you can choose:
+## Key Features
 
-A pre-filled search box with the detected title, ready to edit
-A scrollable list of matches from TVmaze or OMDb showing title, year, and description
-Click any result to select it, then confirm
-The rest of the batch continues processing after you confirm or skip
+### Smart Lookup Picker
+When auto-match isn't confident, a search dialog opens **centred over the app**. Pre-filled with the detected title — edit and search, pick from results, continue the batch.
 
+### Right-Click Menu
+Right-click any file row: 🔍 Manual Search · 🔄 Re-run Auto Lookup · ✕ Remove
 
-Requirements Summary
-RequirementNotesPython 3.10+Only needed if running from sourcerequestspip install requeststkinterdnd2pip install tkinterdnd2 — enables drag and drop supportFFmpegOptional — enables resolution and codec tag detectionOMDb API keyFree at omdbapi.com — needed for movie lookups only
+### Retry Errors
+After lookup, failed files stay in the list. The button shows **🔄 Retry Errors (N)**. Click to retry only failed files.
 
-Changelog
-v1.0 — Initial Release
+### Folder Cleanup (🧹)
+Removes `.txt .idx .nfo .jpg .htm .png .url .bif`, empty subfolders, and System Volume Information. Defaults to last source folder. Scan first, then delete.
 
-TV show renaming via TVmaze
-Movie renaming via OMDb
-Subtitle auto-detection, rename, and move with language tag preservation
-Media tags: resolution, video codec, audio channels — each independently toggleable
-Drag and drop support
-Recursive folder scanning from Add Files dialog and Add Folder button
-Smart lookup picker for ambiguous or unmatched files
-Dry run preview before applying any renames
-Rename history with search and type filter
-OMDb API key and destination folders saved to Documents\PlexBot\
-Destination fields start blank and are remembered after first use
-Empty subfolder cleanup after moving files — root source folders are always protected
-Single-file Windows EXE build via PyInstaller
+### Rename History (📋)
+Every rename logged. Opens instantly with thousands of entries. Filter by All/TV/Movie, search by filename, clear when done.
 
+### In-App Help (❓)
+Full documentation embedded in the app — always available, no internet needed.
 
-Support the Project
-If PlexBot saves you time, a small donation is always appreciated and helps keep the project going.
-Show Image
+---
 
-Contact
-Questions, bug reports, and feature ideas are welcome.
-Click the Contact button inside the app to copy the email address to your clipboard, or write to DMurr5050@gmail.com directly.
+## Configuration
 
-Disclaimer
-PlexBot is an independent open-source project and is not affiliated with, endorsed by, or connected to Plex Inc., TVmaze, or OMDb in any way.
+Auto-saved to `Documents\PlexBot\plexbot_config.json` — OMDb key, destinations, all settings, full history.
+
+---
+
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| Python 3.10+ | Only if running from source |
+| `requests` | `pip install requests` |
+| `tkinterdnd2` | `pip install tkinterdnd2` — drag and drop |
+| FFmpeg | Optional — resolution and codec tags |
+| OMDb API key | Free — needed for OMDb movie lookups only |
+
+---
+
+## Changelog
+
+### v1.06
+- Movie lookup parallelisation — all unique titles searched in parallel (same as TV)
+- Movie session cache — duplicate titles only searched once per session
+- Skip redundant detail fetch when match is confident — halves API calls per movie
+- History dialog: virtual canvas rendering — instant open with 4,000+ entries
+- Search picker always centres over the app window
+- Lookup UI debounced at 100ms — responsive at 100+ concurrent threads
+- Rename UI debounced at 150ms — responsive at 200+ parallel renames
+- Apply & Rename button stays disabled until full lookup batch completes
+
+### v1.05
+- Fixed Apply & Rename button enabling mid-lookup
+- Suppressed CMD window flash during ffprobe calls
+- Taskbar icon uses `plexbot.ico`
+
+### v1.04
+- Folder Cleanup defaults to last source folder
+- Removed confirmation dialogs from Apply & Rename and Delete All
+
+### v1.03
+- Move or Copy mode
+- Collapsible Settings panel
+- Preview Only button removed
+
+### v1.02
+- TheTVDB support for TV Shows and Movies
+- Lookup Via source selector in both tab toolbars
+
+### v1.01
+- Strip year from search query option
+- Right-click context menu (Manual Search, Re-run, Remove)
+- Parallel lookups — 5–30 configurable threads
+- TV folder structure with year and Season subfolders
+- Movie per-title subfolders
+- Retry Errors — lookup button shows count, retries only failures
+- Folder Cleanup tool (🧹)
+- In-app Help (❓) — embedded documentation
+- Rename on background thread — no UI freeze
+- Live flicker-free UI updates during lookup
+- Auto-scroll to active lookup row
+- Successful renames removed from list immediately
+
+### v1.0 — Initial Release
+- TV renaming via TVmaze, Movie renaming via OMDb
+- Subtitle auto-detection and renaming
+- Media tags, drag and drop, recursive scanning
+- Smart picker, rename history, PyInstaller EXE build
+
+---
+
+## Support
+
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-FFD700?style=for-the-badge&logo=paypal&logoColor=black)](https://www.paypal.com/donate/?hosted_button_id=6QVE3GP6SD8ZQ)
+
+**Contact:** click **✉ Contact** in the app, or email **DMurr5050@gmail.com**
+
+*PlexBot is not affiliated with Plex Inc., TVmaze, OMDb, or TheTVDB.*

@@ -34,7 +34,7 @@ OMDB_API_KEY  = ""          # Paste your free OMDb key here, or enter it in the 
 TVDB_BASE     = "https://api4.thetvdb.com/v4"
 _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.03"
+VERSION       = "1.06"
 
 # ── Data-source options shown in the UI dropdowns ──────────────────────────
 TV_SOURCES    = ["TVmaze", "TheTVDB"]
@@ -131,7 +131,6 @@ def tvmaze_get_show_id(show_name: str) -> int:
     return _tv_show_cache[key]
 
 def tvmaze_get_episode_by_id(show_id: int, season: int, episode: int) -> dict:
-    time.sleep(0.2)
     r = requests.get(f"{TVMAZE_BASE}/shows/{show_id}/episodebynumber",
                      params={"season": season, "number": episode}, timeout=10)
     if r.status_code == 404:
@@ -342,9 +341,13 @@ _RES_MAP = {
 
 def get_media_info(filepath: Path) -> dict:
     try:
+        # CREATE_NO_WINDOW suppresses the console flash on Windows
+        kwargs = {}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", str(filepath)],
-            capture_output=True, timeout=15)
+            capture_output=True, timeout=15, **kwargs)
         if result.returncode != 0:
             return {}
         streams = json.loads(result.stdout).get("streams", [])
@@ -379,8 +382,11 @@ def build_media_tags(media: dict, use_res: bool, use_vcodec: bool, use_acodec: b
 
 # ── Plex Name Builders ────────────────────────────────────────────────────────
 def build_tv_name(parsed: dict, ep_title: str, media: dict,
-                  use_res: bool, use_vc: bool, use_ac: bool) -> str:
+                  use_res: bool, use_vc: bool, use_ac: bool,
+                  show_year: str = "") -> str:
     show  = safe_name(parsed["show_name"])
+    if show_year:
+        show = f"{show} ({show_year})"
     s, e  = f"S{parsed['season']:02d}", f"E{parsed['episode']:02d}"
     title = safe_name(ep_title)
     tags  = build_media_tags(media, use_res, use_vc, use_ac)
@@ -671,7 +677,6 @@ class SearchPickerDialog(Toplevel):
                  initial_query: str, search_fn, color):
         super().__init__(parent)
         self.title(title)
-        self.geometry("680x520")
         self.configure(bg=BG_DARK)
         self.resizable(True, True)
         self.grab_set()
@@ -679,14 +684,20 @@ class SearchPickerDialog(Toplevel):
 
         self.search_fn     = search_fn
         self.color         = color
-        self.chosen        = None   # Set when user picks a result
+        self.chosen        = None
         self._results      = []
         self._search_after = None
 
         self._build(filename, initial_query)
-        self.after(100, lambda: self._do_search(initial_query))
 
-        # Block caller until dialog closes
+        # ── Centre over the parent window ─────────────────────────────────
+        self.update_idletasks()
+        w, h = 680, 520
+        px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{max(0,px)}+{max(0,py)}")
+
+        self.after(100, lambda: self._do_search(initial_query))
         self.wait_window(self)
 
     def _build(self, filename: str, query: str):
@@ -891,6 +902,9 @@ class BaseTab(Frame):
         self.opt_audio_codec = BooleanVar(value=True)
         self.file_mode       = StringVar(value="move")   # "move" or "copy"
         self.opt_strip_year  = BooleanVar(value=True)    # strip year from search query
+        self.opt_use_year_in_folder  = BooleanVar(value=True)  # TV: include year in show folder/filename
+        self.opt_create_movie_folder = BooleanVar(value=True)  # Movie: create per-movie subfolder
+        self.opt_threads     = StringVar(value="5")      # concurrent lookup threads
         self._build()
 
     def _build(self):
@@ -1086,6 +1100,36 @@ class BaseTab(Frame):
                 "When a show/movie name contains a year (e.g. 'The Office (2005)')\n"
                 "strip it before searching so results are not filtered too narrowly.")
 
+        # Concurrent threads row
+        thr_row = Frame(sof, bg=BG_SURFACE)
+        thr_row.pack(fill=X, padx=10, pady=(0, 4))
+        Label(thr_row, text="  Concurrent lookups", font=FONT_SMALL,
+              fg=TEXT, bg=BG_SURFACE).pack(side=LEFT)
+
+        THREAD_OPTIONS = ["5", "10", "15", "20", "25", "30"]
+        thr_pill_row = Frame(sof, bg=BG_SURFACE)
+        thr_pill_row.pack(fill=X, padx=10, pady=(0, 6))
+        self._thread_btns = {}
+        for val in THREAD_OPTIONS:
+            is_sel = (val == self.opt_threads.get())
+            b = Label(thr_pill_row, text=val,
+                      font=("Segoe UI", 8, "bold"),
+                      fg="#000" if is_sel else TEXT_DIM,
+                      bg=self.color if is_sel else BG_DARK,
+                      cursor="hand2", padx=8, pady=3)
+            b.pack(side=LEFT, padx=2, pady=(0, 2))
+            b.bind("<Button-1>", lambda e, v=val: self._set_threads(v))
+            b.bind("<Enter>",    lambda e, b=b, v=val: b.configure(
+                bg=self.color if v == self.opt_threads.get() else BG_HOVER,
+                fg="#000" if v == self.opt_threads.get() else WHITE))
+            b.bind("<Leave>",    lambda e, b=b, v=val: b.configure(
+                bg=self.color if v == self.opt_threads.get() else BG_DARK,
+                fg="#000" if v == self.opt_threads.get() else TEXT_DIM))
+            self._thread_btns[val] = b
+
+        # ── Folder structure options (tab-specific) ───────────────────────
+        self._build_folder_options(sb)
+
         # ── Format preview inside body ────────────────────────────────────
         Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(8, 0))
         Label(sb, text="FORMAT PREVIEW", font=("Segoe UI", 8, "bold"),
@@ -1140,6 +1184,18 @@ class BaseTab(Frame):
         self.sum_ready = self._srow(sf, "Matched",     "0", SUCCESS)
         self.sum_skip  = self._srow(sf, "Unmatched",   "0", MUTED)
         self.sum_error = self._srow(sf, "Errors",      "0", ERROR)
+
+    def _set_threads(self, val: str):
+        """Update the concurrent-thread count and repaint the pill buttons."""
+        self.opt_threads.set(val)
+        for v, b in self._thread_btns.items():
+            sel = (v == val)
+            b.configure(
+                bg=self.color if sel else BG_DARK,
+                fg="#000"    if sel else TEXT_DIM,
+            )
+
+    def _build_folder_options(self, parent): pass  # override in subclasses
 
     def _toggle_settings(self):
         """Expand or collapse the Settings body."""
@@ -1202,6 +1258,13 @@ class BaseTab(Frame):
         b._base_bg = bg; b._base_fg = fg
         return b
 
+    def _maybe_enable_apply(self):
+        """Enable the Apply button only when no lookup is running and some entries are ready."""
+        if not self.lookup_running and any(e["status"] == "done" for e in self.file_entries):
+            self._enable_btn(self.apply_btn, self._apply_rename)
+        else:
+            self._disable_btn(self.apply_btn)
+
     def _enable_btn(self, btn, cmd):
         btn.configure(fg=btn._base_fg, bg=btn._base_bg, cursor="hand2")
         btn.bind("<Button-1>", lambda e: cmd())
@@ -1254,6 +1317,10 @@ class BaseTab(Frame):
             })
             existing.add(p); added += 1
         if added:
+            # Remember the parent folder of the most recently added file
+            last = paths[-1] if paths else None
+            if last:
+                self.app.last_source_folder = str(Path(last).parent)
             self._refresh()
             self._summary()
             self.drop_overlay.place_forget()
@@ -1305,15 +1372,79 @@ class BaseTab(Frame):
 
     # ── Table ─────────────────────────────────────────────────────────────────
     def _refresh(self):
-        for w in self.rows_frame.winfo_children(): w.destroy()
+        """
+        Full rebuild — only called when the entry list itself changes
+        (files added, removed, or count changes).  Status-only changes use
+        _update_rows() instead to avoid flicker.
+        """
+        for w in self.rows_frame.winfo_children():
+            w.destroy()
+        self._row_widgets    = {}   # entry_id -> (new_name_lbl, badge_lbl)
+        self._painted_status = {}   # entry_id -> last painted status
         for i, e in enumerate(self.file_entries):
-            self._row(e, i, BG_ROW if i%2==0 else BG_ROW_ALT)
+            self._row(e, i, BG_ROW if i % 2 == 0 else BG_ROW_ALT)
         self.app.file_count_label.config(
-            text=f"{len(self.file_entries)} file{'s' if len(self.file_entries)!=1 else ''}")
+            text=f"{len(self.file_entries)} file{'s' if len(self.file_entries) != 1 else ''}")
         self.canvas.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
+    def _update_rows(self):
+        """
+        Flicker-free in-place update. Only repaints rows whose status
+        actually changed since the last paint. Skips unchanged rows so
+        large lists (300+ entries) don't cause lag.
+        Falls back to a full _refresh if entry count changed.
+        """
+        if not hasattr(self, "_row_widgets"):
+            self._refresh()
+            return
+        if len(self._row_widgets) != len(self.file_entries):
+            self._refresh()
+            return
+
+        if not hasattr(self, "_painted_status"):
+            self._painted_status = {}
+
+        fg_map = {"pending": MUTED, "loading": WARNING, "done": SUCCESS,
+                  "error": ERROR, "renamed": ACCENT}
+        text_map_fn = lambda e: {
+            "pending": "— waiting —",
+            "loading": "⟳ Looking up...",
+            "done":    e.get("new_name") or "—",
+            "error":   f"✗ {e.get('error_msg', 'Error')}",
+            "renamed": f"✓ {e.get('new_name', '')}",
+        }.get(e["status"], "—")
+        badge_map = {
+            "pending": ("PENDING", MUTED,    BG_SURFACE),
+            "loading": ("LOOKUP",  WARNING,  "#2a1f00"),
+            "done":    ("READY",   SUCCESS,  "#0d2a1a"),
+            "error":   ("ERROR",   ERROR,    "#2a0d0d"),
+            "renamed": ("DONE",    ACCENT,   "#2a1f00"),
+        }
+
+        for entry in self.file_entries:
+            eid = id(entry)
+            st  = entry["status"]
+            # Skip rows that haven't changed since last paint
+            if self._painted_status.get(eid) == st:
+                continue
+            if eid not in self._row_widgets:
+                continue
+            new_lbl, badge_lbl = self._row_widgets[eid]
+            try:
+                new_lbl.configure(text=text_map_fn(entry), fg=fg_map.get(st, MUTED))
+                pt, pf, pb = badge_map.get(st, ("—", MUTED, BG_SURFACE))
+                badge_lbl.configure(text=pt, fg=pf, bg=pb)
+                self._painted_status[eid] = st
+            except Exception:
+                pass
+
+        self._summary()
+
     def _row(self, entry, idx, bg):
+        if not hasattr(self, "_row_widgets"):
+            self._row_widgets = {}
+
         row = Frame(self.rows_frame, bg=bg, height=38)
         row.pack(fill=X); row.pack_propagate(False)
         on_e = lambda e, r=row: (r.configure(bg=BG_HOVER),
@@ -1322,7 +1453,7 @@ class BaseTab(Frame):
                [c.configure(bg=b) for c in r.winfo_children()])
         row.bind("<Enter>", on_e); row.bind("<Leave>", on_l)
 
-        rm = Label(row, text="✕", font=("Segoe UI",9), fg=MUTED, bg=bg, cursor="hand2", padx=6)
+        rm = Label(row, text="✕", font=("Segoe UI", 9), fg=MUTED, bg=bg, cursor="hand2", padx=6)
         rm.pack(side=LEFT)
         rm.bind("<Button-1>", lambda e, i=idx: self._remove(i))
         rm.bind("<Enter>",    lambda e, l=rm: l.configure(fg=ERROR))
@@ -1330,28 +1461,37 @@ class BaseTab(Frame):
 
         orig = Label(row, text=entry["path"].name, font=FONT_MONO_SM,
                      fg=TEXT_DIM, bg=bg, anchor=W, width=42)
-        orig.pack(side=LEFT, padx=(2,0))
+        orig.pack(side=LEFT, padx=(2, 0))
         Tooltip(orig, str(entry["path"]) + "\n\nRight-click for manual search")
 
         Label(row, text=" → ", font=FONT_SMALL, fg=MUTED, bg=bg).pack(side=LEFT)
 
         st = entry["status"]
-        fg_map   = {"pending":MUTED,"loading":WARNING,"done":SUCCESS,"error":ERROR,"renamed":ACCENT}
+        fg_map   = {"pending": MUTED, "loading": WARNING, "done": SUCCESS,
+                    "error": ERROR, "renamed": ACCENT}
         text_map = {
             "pending": "— waiting —",
             "loading": "⟳ Looking up...",
             "done":    entry.get("new_name") or "—",
-            "error":   f"✗ {entry.get('error_msg','Error')}",
-            "renamed": f"✓ {entry.get('new_name','')}",
+            "error":   f"✗ {entry.get('error_msg', 'Error')}",
+            "renamed": f"✓ {entry.get('new_name', '')}",
         }
-        Label(row, text=text_map.get(st,"—"), font=FONT_MONO_SM,
-              fg=fg_map.get(st,MUTED), bg=bg, anchor=W).pack(side=LEFT, fill=X, expand=True, padx=(0,6))
+        new_lbl = Label(row, text=text_map.get(st, "—"), font=FONT_MONO_SM,
+                        fg=fg_map.get(st, MUTED), bg=bg, anchor=W)
+        new_lbl.pack(side=LEFT, fill=X, expand=True, padx=(0, 6))
 
-        pt, pf, pb = {"pending":("PENDING",MUTED,BG_SURFACE),"loading":("LOOKUP",WARNING,"#2a1f00"),
-                      "done":("READY",SUCCESS,"#0d2a1a"),"error":("ERROR",ERROR,"#2a0d0d"),
-                      "renamed":("DONE",ACCENT,"#2a1f00")}.get(st,("—",MUTED,BG_SURFACE))
-        Label(row, text=pt, font=("Segoe UI",8,"bold"),
-              fg=pf, bg=pb, padx=8, pady=2).pack(side=RIGHT, padx=8)
+        pt, pf, pb = {"pending": ("PENDING", MUTED,   BG_SURFACE),
+                      "loading": ("LOOKUP",  WARNING,  "#2a1f00"),
+                      "done":    ("READY",   SUCCESS,  "#0d2a1a"),
+                      "error":   ("ERROR",   ERROR,    "#2a0d0d"),
+                      "renamed": ("DONE",    ACCENT,   "#2a1f00")}.get(st, ("—", MUTED, BG_SURFACE))
+        badge_lbl = Label(row, text=pt, font=("Segoe UI", 8, "bold"),
+                          fg=pf, bg=pb, padx=8, pady=2)
+        badge_lbl.pack(side=RIGHT, padx=8)
+
+        # Store references to the dynamic labels so _update_rows can patch them
+        self._row_widgets[id(entry)] = (new_lbl, badge_lbl)
+
         Frame(self.rows_frame, bg=BORDER, height=1).pack(fill=X)
 
         # ── Right-click context menu ───────────────────────────────────────
@@ -1378,35 +1518,29 @@ class BaseTab(Frame):
                 menu.grab_release()
 
         for w in [row] + list(row.winfo_children()):
-            w.bind("<Button-3>", _show_ctx)          # Windows / Linux right-click
-            w.bind("<Control-Button-1>", _show_ctx)  # macOS ctrl+click
+            w.bind("<Button-3>", _show_ctx)
+            w.bind("<Control-Button-1>", _show_ctx)
 
         # ── Subtitle sub-rows ──────────────────────────────────────────────
         for sub in entry.get("subtitles", []):
-            sub_bg = "#161620"  # slightly different shade for sub-rows
+            sub_bg = "#161620"
             srow = Frame(self.rows_frame, bg=sub_bg, height=28)
             srow.pack(fill=X); srow.pack_propagate(False)
 
-            # Indent marker
-            Label(srow, text="   ↳", font=("Segoe UI",9), fg=MUTED,
+            Label(srow, text="   ↳", font=("Segoe UI", 9), fg=MUTED,
                   bg=sub_bg, padx=6).pack(side=LEFT)
-            Label(srow, text="SUB", font=("Segoe UI",7,"bold"),
+            Label(srow, text="SUB", font=("Segoe UI", 7, "bold"),
                   fg="#6688aa", bg=sub_bg, padx=4).pack(side=LEFT)
-
-            # Original subtitle name
             Label(srow, text=sub["path"].name, font=FONT_MONO_SM,
-                  fg="#5566aa", bg=sub_bg, anchor=W, width=40).pack(side=LEFT, padx=(2,0))
-
+                  fg="#5566aa", bg=sub_bg, anchor=W, width=40).pack(side=LEFT, padx=(2, 0))
             Label(srow, text=" → ", font=FONT_SMALL, fg=MUTED,
                   bg=sub_bg).pack(side=LEFT)
-
-            # New subtitle name
-            new_sub_fg = SUCCESS if st in ("done","renamed") else MUTED
-            Label(srow, text=sub.get("new_name","—"), font=FONT_MONO_SM,
+            new_sub_fg = SUCCESS if st in ("done", "renamed") else MUTED
+            Label(srow, text=sub.get("new_name", "—"), font=FONT_MONO_SM,
                   fg=new_sub_fg, bg=sub_bg, anchor=W).pack(
-                  side=LEFT, fill=X, expand=True, padx=(0,8))
-
+                  side=LEFT, fill=X, expand=True, padx=(0, 8))
             Frame(self.rows_frame, bg="#1a1a28", height=1).pack(fill=X)
+
 
     # ── Manual search (right-click) ───────────────────────────────────────────
     def _manual_search(self, entry):
@@ -1415,7 +1549,6 @@ class BaseTab(Frame):
             messagebox.showinfo("Lookup Running",
                 "Please wait for the current lookup to finish.", parent=self.app)
             return
-        # Derive the initial query: use parsed name if available, else raw filename stem
         parsed = entry.get("parsed")
         if parsed:
             query = parsed.get("show_name") or parsed.get("raw_title") or entry["path"].stem
@@ -1424,17 +1557,15 @@ class BaseTab(Frame):
         dlg = self._show_picker(entry, query)
         if dlg and dlg.chosen:
             entry["status"] = "loading"
-            self._refresh()
+            self._update_rows()
             def do_it(e=entry, choice=dlg.chosen):
                 try:
                     self._do_lookup_with_choice(e, choice)
                 except Exception as ex:
-                    e["status"] = "error"
+                    e["status"]    = "error"
                     e["error_msg"] = str(ex)
-                self.after(0, self._refresh)
-                self.after(0, self._summary)
-                if any(fe["status"] == "done" for fe in self.file_entries):
-                    self.after(0, lambda: self._enable_btn(self.apply_btn, self._apply_rename))
+                self.after(0, self._update_rows)
+                self.after(0, self._maybe_enable_apply)
             threading.Thread(target=do_it, daemon=True).start()
 
     def _rerun_single(self, entry):
@@ -1444,7 +1575,7 @@ class BaseTab(Frame):
                 "Please wait for the current lookup to finish.", parent=self.app)
             return
         entry["status"] = "loading"
-        self._refresh()
+        self._update_rows()
         def do_it(e=entry):
             try:
                 self._do_lookup(e)
@@ -1452,7 +1583,7 @@ class BaseTab(Frame):
                 event  = threading.Event()
                 chosen = [None]
                 def show_picker(e=e, ex=ex, event=event, chosen=chosen):
-                    dlg = self._show_picker(e, str(ex.query))
+                    dlg       = self._show_picker(e, str(ex.query))
                     chosen[0] = dlg.chosen if dlg else None
                     event.set()
                 self.after(0, show_picker)
@@ -1461,18 +1592,16 @@ class BaseTab(Frame):
                     try:
                         self._do_lookup_with_choice(e, chosen[0])
                     except Exception as ex2:
-                        e["status"] = "error"
+                        e["status"]    = "error"
                         e["error_msg"] = str(ex2)
                 else:
-                    e["status"] = "error"
+                    e["status"]    = "error"
                     e["error_msg"] = "Skipped by user"
             except Exception as ex:
-                e["status"] = "error"
+                e["status"]    = "error"
                 e["error_msg"] = str(ex)
-            self.after(0, self._refresh)
-            self.after(0, self._summary)
-            if any(fe["status"] == "done" for fe in self.file_entries):
-                self.after(0, lambda: self._enable_btn(self.apply_btn, self._apply_rename))
+            self.after(0, self._update_rows)
+            self.after(0, self._maybe_enable_apply)
         threading.Thread(target=do_it, daemon=True).start()
 
     # ── Lookup ────────────────────────────────────────────────────────────────
@@ -1481,6 +1610,7 @@ class BaseTab(Frame):
         if not self.file_entries:
             messagebox.showwarning("No Files", "Add some video files first."); return
         self.lookup_running = True
+        self.lookup_btn.configure(text=self._lookup_label())
         self._disable_btn(self.lookup_btn)
         self._disable_btn(self.apply_btn)
         self.progress.pack(fill=X, pady=(0,4))
@@ -1488,62 +1618,173 @@ class BaseTab(Frame):
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self):
-        total = len(self.file_entries)
-        for i, entry in enumerate(self.file_entries):
+        """
+        Everything runs on background threads — the UI is never blocked.
+
+        Flow:
+          1. Mark error/pending entries as loading  (instant, on this thread)
+          2. Call _build_work_batches()              (may do network I/O on this thread for TV show resolution)
+          3. Fan out episode/movie fetches in a ThreadPoolExecutor
+          4. Picker dialogs are marshalled to the main thread via self.after()
+             and a threading.Event; worker threads block only on their own event.
+        """
+        import queue as _queue
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        PARALLELISM  = int(self.opt_threads.get())
+        completed    = [0]
+        lock         = threading.Lock()
+        picker_queue = _queue.Queue()
+
+        # ── Mark only error/pending entries as loading ────────────────────
+        for entry in self.file_entries:
+            if entry["status"] in ("error", "pending"):
+                entry["status"] = "loading"
+        self.after(0, self._refresh)
+
+        # ── Build the work list (may resolve shows in parallel internally) ─
+        work  = self._build_work_batches()
+        total = len(work)
+
+        if total == 0:
+            self.after(0, self._lookup_done)
+            return
+
+        def tick(name):
+            with lock:
+                completed[0] += 1
+                done = completed[0]
+            self._prog(done, total, name)
+
+        def run_entry(entry):
             if entry["status"] == "renamed":
-                self._prog(i+1, total, entry["path"].name); continue
-            entry["status"] = "loading"
-            self.after(0, self._refresh)
-            if not entry["parsed"]:
-                entry["status"] = "error"
-                entry["error_msg"] = "Could not parse filename"
-                self._prog(i+1, total, entry["path"].name); continue
+                tick(entry["path"].name)
+                return
             try:
                 self._do_lookup(entry)
             except LookupNotFoundError as ex:
-                # Show picker dialog on main thread, block until user picks
-                event   = threading.Event()
-                chosen  = [None]
-                def show_picker(entry=entry, ex=ex, event=event, chosen=chosen):
-                    dlg = self._show_picker(entry, str(ex.query))
-                    chosen[0] = dlg.chosen if dlg else None
-                    event.set()
-                self.after(0, show_picker)
-                event.wait()  # Block worker thread until dialog closes
+                ev     = threading.Event()
+                chosen = [None]
+                picker_queue.put((entry, str(ex.query), ev, chosen))
+                ev.wait()
                 if chosen[0]:
                     try:
                         self._do_lookup_with_choice(entry, chosen[0])
                     except Exception as ex2:
-                        entry["status"] = "error"
+                        entry["status"]    = "error"
                         entry["error_msg"] = str(ex2)
                 else:
-                    entry["status"] = "error"
+                    entry["status"]    = "error"
                     entry["error_msg"] = "Skipped by user"
             except Exception as ex:
-                entry["status"] = "error"
+                entry["status"]    = "error"
                 entry["error_msg"] = str(ex)
-            self._prog(i+1, total, entry["path"].name)
+            tick(entry["path"].name)
+
+        def drain_pickers():
+            try:
+                while True:
+                    entry, query, ev, chosen = picker_queue.get_nowait()
+                    dlg       = self._show_picker(entry, query)
+                    chosen[0] = dlg.chosen if dlg else None
+                    ev.set()
+            except _queue.Empty:
+                pass
+
+        def pool_worker():
+            with ThreadPoolExecutor(max_workers=PARALLELISM) as executor:
+                futures = {executor.submit(run_entry, e): e for e in work}
+                for _ in as_completed(futures):
+                    pass
+
+        def schedule_drain():
+            drain_pickers()
+            if self.lookup_running:
+                self.after(150, schedule_drain)
+
+        self.after(0, schedule_drain)
+        pool_worker()
+        self.after(0, drain_pickers)
         self.after(0, self._lookup_done)
+
+    def _build_work_batches(self) -> list:
+        """Return entries that still need processing (error or pending/loading)."""
+        return [e for e in self.file_entries
+                if e["status"] in ("error", "pending", "loading")]
 
     def _do_lookup(self, entry): pass           # override
     def _show_picker(self, entry, query): return None  # override
     def _do_lookup_with_choice(self, entry, choice): pass  # override
 
     def _prog(self, done, total, name):
-        pct   = int(done/total*100)
-        short = name[:50]+"…" if len(name)>50 else name
-        self.after(0, lambda: self.progress.configure(value=pct))
-        self.after(0, lambda: self.prog_label.configure(text=f"{done}/{total}  {short}"))
-        self.after(0, self._refresh)
-        self.after(0, self._summary)
+        """
+        Thread-safe progress update with debouncing.
+        Parallel threads firing rapidly are coalesced into a single
+        UI repaint every ~100 ms to avoid flooding the event queue.
+        """
+        self._prog_done  = done
+        self._prog_total = total
+        self._prog_name  = name
+        if not getattr(self, "_prog_pending", False):
+            self._prog_pending = True
+            self.after(100, self._flush_prog)
+
+    def _flush_prog(self):
+        """Apply the latest progress values to the UI (runs on main thread)."""
+        self._prog_pending = False
+        done  = getattr(self, "_prog_done",  0)
+        total = getattr(self, "_prog_total", 1)
+        name  = getattr(self, "_prog_name",  "")
+        pct   = int(done / total * 100) if total else 0
+        short = name[:50] + "…" if len(name) > 50 else name
+        try:
+            self.progress.configure(value=pct)
+            self.prog_label.configure(text=f"{done}/{total}  {short}")
+        except Exception:
+            pass
+        self._update_rows()
+        self._scroll_to_active()
+
+    def _scroll_to_active(self):
+        """Scroll the file list so the first 'loading' or most-recently-updated row is visible."""
+        active_idx = None
+        for i, e in enumerate(self.file_entries):
+            if e["status"] == "loading":
+                active_idx = i
+                break
+        if active_idx is None:
+            for i, e in enumerate(self.file_entries):
+                if e["status"] in ("done", "error", "renamed"):
+                    active_idx = i
+        if active_idx is None:
+            return
+        try:
+            self.canvas.update_idletasks()
+            bbox = self.canvas.bbox("all")
+            if not bbox:
+                return
+            total_height = bbox[3] - bbox[1]
+            if total_height <= 0:
+                return
+            n = len(self.file_entries)
+            if n == 0:
+                return
+            row_fraction = active_idx / n
+            scroll_to    = max(0.0, min(1.0, row_fraction - 0.15))
+            self.canvas.yview_moveto(scroll_to)
+        except Exception:
+            pass
 
     def _lookup_done(self):
         self.lookup_running = False
+        has_errors = any(e["status"] == "error" for e in self.file_entries)
+        btn_label  = (f"🔄  Retry Errors ({sum(1 for e in self.file_entries if e['status'] == 'error')})"
+                      if has_errors else self._lookup_label())
+        self.lookup_btn.configure(text=btn_label)
         self._enable_btn(self.lookup_btn, self._start_lookup)
-        if any(e["status"]=="done" for e in self.file_entries):
-            self._enable_btn(self.apply_btn, self._apply_rename)
-        ready  = sum(1 for e in self.file_entries if e["status"]=="done")
-        errors = sum(1 for e in self.file_entries if e["status"]=="error")
+        self._maybe_enable_apply()
+        ready  = sum(1 for e in self.file_entries if e["status"] == "done")
+        errors = sum(1 for e in self.file_entries if e["status"] == "error")
         self.app.set_status(f"Lookup complete — {ready} ready, {errors} errors")
         self.after(2500, lambda: [self.progress.pack_forget(), self.prog_label.pack_forget()])
 
@@ -1551,8 +1792,12 @@ class BaseTab(Frame):
     def _dest_for(self, entry):
         dest = self.dest_var.get().strip()
         if dest:
-            sub = safe_name(self._subfolder(entry))
-            return Path(dest) / sub if sub else Path(dest)
+            sub = self._subfolder(entry)   # may be a multi-part path like "Show (2001)/Season 01"
+            if sub:
+                # Safe-name each component individually so path separators are preserved
+                safe_sub = Path(*[safe_name(part) for part in Path(sub).parts])
+                return Path(dest) / safe_sub
+            return Path(dest)
         return entry["path"].parent
 
     def _subfolder(self, entry): return ""  # override
@@ -1571,122 +1816,158 @@ class BaseTab(Frame):
         self._log("Preview (Dry Run)", "\n".join(lines))
 
     def _apply_rename(self):
-        ready = [e for e in self.file_entries if e["status"]=="done"]
+        ready = [e for e in self.file_entries if e["status"] == "done"]
         if not ready:
-            messagebox.showinfo("Nothing Ready","Run Lookup first."); return
+            messagebox.showinfo("Nothing Ready", "Run Lookup first.")
+            return
         dest_root = self.dest_var.get().strip()
         dest_path = Path(dest_root) if dest_root else None
-        mode      = self.file_mode.get()   # "move" or "copy"
-        is_copy   = (mode == "copy")
+        is_copy   = (self.file_mode.get() == "copy")
 
         if dest_path and not dest_path.exists():
             if messagebox.askyesno("Create Folder?",
                     f"Destination doesn't exist:\n{dest_path}\n\nCreate it?"):
                 dest_path.mkdir(parents=True)
-            else: return
+            else:
+                return
 
-        action_word = "Copy" if is_copy else "Move & Rename"
-        if not messagebox.askyesno("Confirm",
-                f"{action_word} {len(ready)} file(s)"
-                +(f"\nto:\n{dest_path}" if dest_path else "")
-                +("\n\nOriginals will be kept in place." if is_copy else "")
-                +"\n\nContinue?"): return
+        # Disable buttons while running
+        self._disable_btn(self.apply_btn)
+        self._disable_btn(self.lookup_btn)
+        self.app.set_status("Renaming…")
 
-        log_lines   = [f"{'COPY' if is_copy else 'RENAME'} LOG","="*60]
-        renamed = errors = sub_count = 0
-        src_folders = set()  # Track folders we moved files out of (move mode only)
+        def _do_rename():
+            from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+            import datetime
 
-        for e in ready:
-            src     = e["path"]
-            tgt_dir = self._dest_for(e)
-            tgt     = tgt_dir / e["new_name"]
-            try:
-                tgt_dir.mkdir(parents=True, exist_ok=True)
+            parallelism = int(self.opt_threads.get())
+            lock        = threading.Lock()
+            renamed_c   = [0]; errors_c = [0]; sub_c = [0]
+            src_folders = set()
+            self._rename_flush_pending = False
+            self._rename_active        = True
 
-                # ── Find subtitle siblings BEFORE touching the video ──
-                subs = find_subtitle_siblings(src)
+            # ── Debounced UI refresh — fires every 150 ms while renaming ──
+            def _rename_tick():
+                if self._rename_flush_pending:
+                    self._rename_flush_pending = False
+                    self._remove_renamed_and_refresh()
+                if self._rename_active:
+                    self.after(150, _rename_tick)
 
-                # ── Move or copy the video file ──
-                e["_orig_name"] = src.name   # save before overwriting path
-                if is_copy:
-                    shutil.copy2(str(src), str(tgt))
-                    log_lines.append(f"\n  ⎘  {src.name}\n     → {tgt}")
-                else:
-                    shutil.move(str(src), str(tgt)) if dest_path else src.rename(tgt)
-                    src_folders.add(src.parent)
-                    log_lines.append(f"\n  ✓  {src.name}\n     → {tgt}")
+            self.after(150, _rename_tick)
 
-                e["path"] = tgt; e["status"] = "renamed"
-                renamed += 1
+            def rename_one(e):
+                src     = e["path"]
+                tgt_dir = self._dest_for(e)
+                tgt     = tgt_dir / e["new_name"]
+                local_subs = 0
+                try:
+                    tgt_dir.mkdir(parents=True, exist_ok=True)
+                    subs = find_subtitle_siblings(src)
 
-                # ── Move or copy each subtitle sibling ──
-                for sub in subs:
-                    new_sub_name = build_subtitle_name(e["new_name"], sub)
-                    sub_tgt      = tgt_dir / new_sub_name
-                    try:
-                        if is_copy:
-                            shutil.copy2(str(sub), str(sub_tgt))
-                        else:
-                            shutil.move(str(sub), str(sub_tgt)) if dest_path else sub.rename(sub_tgt)
-                            src_folders.add(sub.parent)
-                        log_lines.append(f"     ↳ subtitle: {sub.name}\n              → {sub_tgt.name}")
-                        sub_count += 1
-                    except Exception as sub_ex:
-                        log_lines.append(f"     ↳ subtitle ERROR: {sub.name} — {sub_ex}")
+                    e["_orig_name"] = src.name
+                    if is_copy:
+                        shutil.copy2(str(src), str(tgt))
+                    else:
+                        shutil.move(str(src), str(tgt)) if dest_path else src.rename(tgt)
+                        with lock:
+                            src_folders.add(src.parent)
 
-            except Exception as ex:
-                e["status"] = "error"; e["error_msg"] = str(ex)
-                log_lines.append(f"\n  ✗  {src.name}\n     ERROR: {ex}")
-                errors += 1
+                    e["path"]   = tgt
+                    e["status"] = "renamed"
+                    with lock:
+                        renamed_c[0] += 1
 
-        # ── Clean up empty source folders (move mode only) ──────────────
-        removed_folders = []
-        if not is_copy and src_folders:
-            dest_root_path = Path(dest_root) if dest_root else None
-            protected = set()
-            for folder in src_folders:
-                if folder.parent not in src_folders:
-                    protected.add(folder)
+                    for sub in subs:
+                        new_sub_name = build_subtitle_name(e["new_name"], sub)
+                        sub_tgt      = tgt_dir / new_sub_name
+                        try:
+                            if is_copy:
+                                shutil.copy2(str(sub), str(sub_tgt))
+                            else:
+                                shutil.move(str(sub), str(sub_tgt)) if dest_path else sub.rename(sub_tgt)
+                                with lock:
+                                    src_folders.add(sub.parent)
+                            local_subs += 1
+                        except Exception:
+                            pass
+                    with lock:
+                        sub_c[0] += local_subs
 
-            for folder in sorted(src_folders, key=lambda p: len(p.parts), reverse=True):
-                if folder in protected:
-                    continue
-                if dest_root_path and folder == dest_root_path:
-                    continue
-                try_remove_empty_folder(folder)
-                if not folder.exists():
-                    removed_folders.append(folder)
-                    log_lines.append(f"\n  🗑  Removed empty folder: {folder}")
+                except Exception as ex:
+                    e["status"]    = "error"
+                    e["error_msg"] = str(ex)
+                    with lock:
+                        errors_c[0] += 1
 
-        # ── Save history entries to config ──
-        import datetime
-        tab_type = "TV" if isinstance(self, TVTab) else "Movie"
-        new_history = []
-        for e in ready:
-            if e["status"] == "renamed":
-                new_history.append({
-                    "type":      tab_type,
-                    "original":  e.get("_orig_name", e["path"].name),
-                    "renamed":   e["new_name"],
-                    "dest":      str(e["path"].parent),
-                    "mode":      "copy" if is_copy else "move",
-                    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-                })
-        if new_history:
-            cfg = load_config()
-            history = cfg.get("history", [])
-            history = new_history + history
-            history = history[:2000]
-            save_config({"history": history})
+                # Signal that at least one file finished — debounced UI update
+                self._rename_flush_pending = True
 
-        self._refresh(); self._summary()
-        action_done = "copied" if is_copy else "renamed"
-        status = f"Done — {renamed} {action_done}"
-        if sub_count:       status += f", {sub_count} subtitle(s)"
-        if errors:          status += f", {errors} error(s)"
-        if removed_folders: status += f", {len(removed_folders)} empty folder(s) deleted"
-        self.app.set_status(status)
-        self._log(f"{'Copy' if is_copy else 'Rename'} Complete", "\n".join(log_lines))
+            with ThreadPoolExecutor(max_workers=parallelism) as executor:
+                futures = {executor.submit(rename_one, e): e for e in ready}
+                for _ in _as_completed(futures):
+                    pass
+
+            # ── Clean up empty source folders (move mode only) ────────────
+            removed_folders = []
+            if not is_copy and src_folders:
+                dest_root_path = Path(dest_root) if dest_root else None
+                protected = {f for f in src_folders if f.parent not in src_folders}
+                for folder in sorted(src_folders, key=lambda p: len(p.parts), reverse=True):
+                    if folder in protected:
+                        continue
+                    if dest_root_path and folder == dest_root_path:
+                        continue
+                    try_remove_empty_folder(folder)
+                    if not folder.exists():
+                        removed_folders.append(folder)
+
+            # ── Save history ──────────────────────────────────────────────
+            tab_type    = "TV" if isinstance(self, TVTab) else "Movie"
+            new_history = []
+            for e in ready:
+                if e["status"] == "renamed":
+                    new_history.append({
+                        "type":      tab_type,
+                        "original":  e.get("_orig_name", e["path"].name),
+                        "renamed":   e["new_name"],
+                        "dest":      str(e["path"].parent),
+                        "mode":      "copy" if is_copy else "move",
+                        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    })
+            if new_history:
+                cfg     = load_config()
+                history = new_history + cfg.get("history", [])
+                save_config({"history": history[:2000]})
+
+            # ── Final UI update on main thread ────────────────────────────
+            def _finish():
+                self._rename_active = False          # stop the tick loop
+                self._remove_renamed_and_refresh()   # final flush
+                action_done = "copied" if is_copy else "renamed"
+                status = f"Done — {renamed_c[0]} {action_done}"
+                if sub_c[0]:        status += f", {sub_c[0]} subtitle(s)"
+                if errors_c[0]:     status += f", {errors_c[0]} error(s)"
+                if removed_folders: status += f", {len(removed_folders)} empty folder(s) deleted"
+                self.app.set_status(status)
+                self._enable_btn(self.lookup_btn, self._start_lookup)
+                if any(e["status"] == "done" for e in self.file_entries):
+                    self._maybe_enable_apply()
+                if not self.file_entries:
+                    self.drop_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+                    self.drop_overlay.lift()
+
+            self.after(0, _finish)
+
+        threading.Thread(target=_do_rename, daemon=True).start()
+
+    def _remove_renamed_and_refresh(self):
+        """Remove all 'renamed' entries from the list and refresh the table."""
+        self.file_entries = [e for e in self.file_entries if e["status"] != "renamed"]
+        self._refresh()
+        self._summary()
+
 
     def _log(self, title, content):
         win = Toplevel(self); win.title(title)
@@ -1770,33 +2051,182 @@ class TVTab(BaseTab):
 
     def _lookup_label(self): return "🔍  Lookup Episodes"
     def _parse(self, f):     return parse_tv_filename(f)
-    def _subfolder(self, e): return safe_name(e["parsed"]["show_name"]) if e.get("parsed") else ""
+
+    def _subfolder(self, e):
+        if not e.get("parsed"):
+            return ""
+        show     = safe_name(e["parsed"]["show_name"])
+        year     = e["parsed"].get("show_year", "")
+        season   = e["parsed"].get("season", 1)
+        if self.opt_use_year_in_folder.get() and year:
+            show_folder = f"{show} ({year})"
+        else:
+            show_folder = show
+        season_folder = f"Season {season:02d}"
+        return str(Path(show_folder) / season_folder)
+
+    def _build_folder_options(self, parent):
+        Frame(parent, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(8, 0))
+        Label(parent, text="FOLDER STRUCTURE", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
+        fof = Frame(parent, bg=BG_SURFACE, bd=0, highlightthickness=1,
+                    highlightbackground=BORDER)
+        fof.pack(fill=X, padx=16)
+        fo_row = Frame(fof, bg=BG_SURFACE)
+        fo_row.pack(fill=X, padx=10, pady=3)
+        fo_cb = Checkbutton(fo_row,
+                            text="  Include year in show folder & filename",
+                            variable=self.opt_use_year_in_folder,
+                            font=FONT_SMALL, fg=TEXT, bg=BG_SURFACE,
+                            selectcolor=BG_DARK, activebackground=BG_SURFACE,
+                            activeforeground=TEXT, highlightthickness=0, bd=0,
+                            cursor="hand2", command=self._update_preview)
+        fo_cb.pack(side=LEFT)
+        Tooltip(fo_cb,
+                "Structures folders as:\n"
+                "Show Name (YYYY) / Season 01 / Show Name (YYYY) - S01E01 - Title.mkv")
+
+    def _build_work_batches(self) -> list:
+        """
+        1. Group entries by show name.
+        2. Resolve all unique shows IN PARALLEL (one search per show, not per episode).
+        3. Stamp the resolved show data onto each entry.
+        4. Return the flat list of entries ready for parallel episode fetching.
+
+        Picker dialogs (unmatched shows) are serialised one at a time on the
+        main thread via self.after() + threading.Event.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+        # ── Immediately fail un-parseable entries ─────────────────────────
+        for e in self.file_entries:
+            if e["status"] in ("error", "pending", "loading") and not e.get("parsed"):
+                e["status"]    = "error"
+                e["error_msg"] = "Could not parse filename"
+
+        pending = [e for e in self.file_entries
+                   if e["status"] in ("error", "pending", "loading")
+                   and e.get("parsed")]
+
+        if not pending:
+            return []
+
+        # ── Group by normalised show query ────────────────────────────────
+        groups: dict = {}
+        for e in pending:
+            query = e["parsed"]["show_name"]
+            if self.opt_strip_year.get():
+                query = strip_year_from_query(query)
+            key = query.lower().strip()
+            groups.setdefault(key, {"query": query, "entries": []})
+            groups[key]["entries"].append(e)
+
+        src        = self._source_var.get()
+        parallelism = int(self.opt_threads.get())
+
+        # ── Resolve show searches in parallel ─────────────────────────────
+        def resolve_show(key_grp):
+            key, grp = key_grp
+            query = grp["query"]
+            try:
+                if src == "TheTVDB":
+                    results = tvdb_search_shows(query)
+                else:
+                    results = tvmaze_search_shows(query)
+
+                if not results:
+                    raise LookupNotFoundError(f"Show not found: '{query}'", query)
+
+                top = results[0]
+                if top["name"].lower().strip() != query.lower().strip() and len(results) > 1:
+                    raise LookupNotFoundError(f"Multiple matches for '{query}'", query)
+
+                return key, grp, {"id": top["id"], "name": top["name"],
+                                  "premiered": top.get("premiered", "")}, None
+            except LookupNotFoundError as ex:
+                return key, grp, None, ex
+            except Exception as ex:
+                return key, grp, None, Exception(str(ex))
+
+        needs_picker  = []   # (grp, query) where picker is required
+        show_errors   = []   # (grp, error_msg) for hard failures
+
+        with ThreadPoolExecutor(max_workers=parallelism) as pool:
+            futures = {pool.submit(resolve_show, item): item
+                       for item in groups.items()}
+            for fut in _as_completed(futures):
+                key, grp, show_data, exc = fut.result()
+                if show_data:
+                    for e in grp["entries"]:
+                        e["_cached_show"] = show_data
+                elif isinstance(exc, LookupNotFoundError):
+                    needs_picker.append((grp, exc.query))
+                else:
+                    show_errors.append((grp, str(exc)))
+
+        # ── Hard failures ─────────────────────────────────────────────────
+        for grp, msg in show_errors:
+            for e in grp["entries"]:
+                e["status"]    = "error"
+                e["error_msg"] = msg
+
+        # ── Picker dialogs — serialised one at a time on the main thread ──
+        for grp, query in needs_picker:
+            ev     = threading.Event()
+            chosen = [None]
+            def _show_dlg(grp=grp, query=query, ev=ev, chosen=chosen):
+                dlg       = self._show_picker(grp["entries"][0], query)
+                chosen[0] = dlg.chosen if dlg else None
+                ev.set()
+            self.after(0, _show_dlg)
+            ev.wait()
+            if chosen[0]:
+                show_data = {"id":        chosen[0]["id"],
+                             "name":      chosen[0]["name"],
+                             "premiered": chosen[0].get("premiered", "")}
+                for e in grp["entries"]:
+                    e["_cached_show"] = show_data
+            else:
+                for e in grp["entries"]:
+                    e["status"]    = "error"
+                    e["error_msg"] = "Skipped by user"
+
+        # Return entries that have a resolved show and are ready for episode fetch
+        return [e for e in self.file_entries
+                if e.get("_cached_show") and e["status"] not in ("renamed", "error")]
 
     def _do_lookup(self, entry):
+        """
+        Episode fetch only — show search already done in _build_work_batches.
+        Falls back to full lookup if cache is missing (e.g. manual re-run).
+        """
         p   = entry["parsed"]
         src = self._source_var.get()
 
-        query = p["show_name"]
-        if self.opt_strip_year.get():
-            query = strip_year_from_query(query)
+        cached = entry.get("_cached_show")
+        if not cached:
+            # Fallback: full search (used by single-entry re-run / manual search)
+            query = p["show_name"]
+            if self.opt_strip_year.get():
+                query = strip_year_from_query(query)
+            if src == "TheTVDB":
+                results = tvdb_search_shows(query)
+            else:
+                results = tvmaze_search_shows(query)
+            if not results:
+                raise LookupNotFoundError(
+                    f"Show not found: '{query}'", query)
+            top = results[0]
+            if top["name"].lower().strip() != query.lower().strip() and len(results) > 1:
+                raise LookupNotFoundError(
+                    f"Multiple matches for '{query}'", query)
+            cached = {"id": top["id"], "name": top["name"],
+                      "premiered": top.get("premiered", "")}
 
-        if src == "TheTVDB":
-            results = tvdb_search_shows(query)
-        else:
-            results = tvmaze_search_shows(query)
+        self._finish_tv_lookup(entry, cached["id"], cached["name"],
+                               show_year=cached.get("premiered", ""))
 
-        if not results:
-            raise LookupNotFoundError(
-                f"Show not found: '{query}'", query)
-        top        = results[0]
-        name_match = top["name"].lower().strip()
-        query_norm = query.lower().strip()
-        if name_match != query_norm and len(results) > 1:
-            raise LookupNotFoundError(
-                f"Multiple matches for '{query}'", query)
-        self._finish_tv_lookup(entry, top["id"], top["name"])
-
-    def _finish_tv_lookup(self, entry, show_id, show_name: str):
+    def _finish_tv_lookup(self, entry, show_id, show_name: str, show_year: str = ""):
         p   = entry["parsed"]
         src = self._source_var.get()
 
@@ -1807,10 +2237,14 @@ class TVTab(BaseTab):
 
         media = get_media_info(entry["path"])
         entry["media_info"] = media
-        p["show_name"] = show_name
+        p["show_name"]  = show_name
+        p["show_year"]  = show_year    # store for subfolder routing
+        yr = show_year if self.opt_use_year_in_folder.get() else ""
         entry["new_name"] = build_tv_name(p, ep["name"], media,
-            self.opt_resolution.get(), self.opt_video_codec.get(), self.opt_audio_codec.get())
+            self.opt_resolution.get(), self.opt_video_codec.get(), self.opt_audio_codec.get(),
+            show_year=yr)
         entry["status"] = "done"
+        entry.pop("_cached_show", None)   # tidy up temp cache key
         subs = find_subtitle_siblings(entry["path"])
         entry["subtitles"] = [
             {"path": s, "new_name": build_subtitle_name(entry["new_name"], s)}
@@ -1832,10 +2266,12 @@ class TVTab(BaseTab):
         return dlg
 
     def _do_lookup_with_choice(self, entry, choice: dict):
-        self._finish_tv_lookup(entry, choice["id"], choice["name"])
+        self._finish_tv_lookup(entry, choice["id"], choice["name"],
+                               show_year=choice.get("premiered", ""))
 
     def _update_preview(self):
-        parts = ["Show Name - S01E01 - Episode Title"]
+        show = "Show Name (2001)" if self.opt_use_year_in_folder.get() else "Show Name"
+        parts = [f"{show} - S01E01 - Episode Title"]
         if self.opt_resolution.get():  parts.append("1080p")
         if self.opt_video_codec.get(): parts.append("HEVC")
         if self.opt_audio_codec.get(): parts.append("5.1")
@@ -1953,7 +2389,173 @@ class MoviesTab(BaseTab):
     def _parse(self, f):     return parse_movie_filename(f)
 
     def _subfolder(self, e):
+        if self.opt_create_movie_folder.get():
+            return e.get("movie_folder", "")
         return ""
+
+    def _build_folder_options(self, parent):
+        Frame(parent, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(8, 0))
+        Label(parent, text="FOLDER STRUCTURE", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
+        fof = Frame(parent, bg=BG_SURFACE, bd=0, highlightthickness=1,
+                    highlightbackground=BORDER)
+        fof.pack(fill=X, padx=16)
+        fo_row = Frame(fof, bg=BG_SURFACE)
+        fo_row.pack(fill=X, padx=10, pady=3)
+        fo_cb = Checkbutton(fo_row,
+                            text="  Create per-movie subfolder",
+                            variable=self.opt_create_movie_folder,
+                            font=FONT_SMALL, fg=TEXT, bg=BG_SURFACE,
+                            selectcolor=BG_DARK, activebackground=BG_SURFACE,
+                            activeforeground=TEXT, highlightthickness=0, bd=0,
+                            cursor="hand2", command=self._update_preview)
+        fo_cb.pack(side=LEFT)
+        Tooltip(fo_cb,
+                "Creates a subfolder named 'Movie Title (YYYY)' inside\n"
+                "your Movies destination for each film.")
+
+    def _build_work_batches(self) -> list:
+        """
+        Group movies by normalised title, resolve each unique title once
+        in parallel (pre-populating the session cache), then return the
+        flat list for the episode-fetch pool.  Duplicate titles (e.g.
+        multiple files for the same movie) only hit the API once.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+        if not hasattr(self, "_movie_cache"):
+            self._movie_cache = {}
+
+        # Mark un-parseable entries immediately
+        for e in self.file_entries:
+            if e["status"] in ("error", "pending", "loading") and not e.get("parsed"):
+                e["status"]    = "error"
+                e["error_msg"] = "Could not parse filename"
+
+        pending = [e for e in self.file_entries
+                   if e["status"] in ("error", "pending", "loading")
+                   and e.get("parsed")]
+        if not pending:
+            return []
+
+        src         = self._source_var.get()
+        parallelism = int(self.opt_threads.get())
+
+        # Group by cache key so identical titles share one lookup
+        groups: dict = {}
+        for e in pending:
+            p     = e["parsed"]
+            query = p["raw_title"]
+            if self.opt_strip_year.get():
+                query = strip_year_from_query(query)
+            search_year = p.get("year") if not self.opt_strip_year.get() else None
+            key = self._movie_cache_key(query, search_year)
+            groups.setdefault(key, {"query": query, "year": search_year, "entries": []})
+            groups[key]["entries"].append(e)
+
+        # Skip groups already in cache
+        uncached = {k: v for k, v in groups.items() if k not in self._movie_cache}
+
+        def resolve_movie(item):
+            cache_key, grp = item
+            query       = grp["query"]
+            search_year = grp["year"]
+            try:
+                if src == "TheTVDB":
+                    results = tvdb_search_movies(query, search_year)
+                    if not results:
+                        raise LookupNotFoundError(f"Movie not found: '{query}'", query)
+                    top = results[0]
+                    if search_year and top["year"] != str(search_year) and len(results) > 1:
+                        raise LookupNotFoundError(f"Multiple matches for '{query}'", query)
+                    full = top if (top.get("title") and top.get("year","????") != "????") \
+                               else tvdb_get_movie(top["id"])
+                else:
+                    key = self.api_key_var.get().strip()
+                    if not key:
+                        raise ValueError("Enter your OMDb API key at the top of the Movies tab")
+                    results = omdb_search_movies(query, search_year, key)
+                    if not results:
+                        raise LookupNotFoundError(f"Movie not found: '{query}'", query)
+                    top = results[0]
+                    if search_year and top["year"] != str(search_year) and len(results) > 1:
+                        raise LookupNotFoundError(f"Multiple matches for '{query}'", query)
+                    q_norm    = query.lower().strip()
+                    t_norm    = top["title"].lower().strip()
+                    confident = (q_norm == t_norm or q_norm in t_norm or t_norm in q_norm)
+                    full = top if (confident and top.get("title") and top.get("year","????") != "????") \
+                               else omdb_get_movie(top["id"], key)
+                return cache_key, grp, full, None
+            except LookupNotFoundError as ex:
+                return cache_key, grp, None, ex
+            except Exception as ex:
+                return cache_key, grp, None, Exception(str(ex))
+
+        needs_picker = []
+        hard_errors  = []
+
+        if uncached:
+            with ThreadPoolExecutor(max_workers=parallelism) as pool:
+                futures = {pool.submit(resolve_movie, item): item
+                           for item in uncached.items()}
+                for fut in _as_completed(futures):
+                    cache_key, grp, full, exc = fut.result()
+                    if full:
+                        self._movie_cache[cache_key] = full
+                    elif isinstance(exc, LookupNotFoundError):
+                        needs_picker.append((grp, exc.query))
+                    else:
+                        hard_errors.append((grp, str(exc)))
+
+        # Hard failures
+        for grp, msg in hard_errors:
+            for e in grp["entries"]:
+                e["status"]    = "error"
+                e["error_msg"] = msg
+
+        # Picker dialogs — one at a time on the main thread
+        for grp, query in needs_picker:
+            ev     = threading.Event()
+            chosen = [None]
+            def _show_dlg(grp=grp, query=query, ev=ev, chosen=chosen):
+                dlg       = self._show_picker(grp["entries"][0], query)
+                chosen[0] = dlg.chosen if dlg else None
+                ev.set()
+            self.after(0, _show_dlg)
+            ev.wait()
+            if chosen[0]:
+                # Fetch full detail for picker choice
+                try:
+                    if src == "TheTVDB":
+                        full = tvdb_get_movie(chosen[0]["id"])
+                    else:
+                        api_key = self.api_key_var.get().strip()
+                        full = omdb_get_movie(chosen[0]["id"], api_key) \
+                               if chosen[0].get("id") else chosen[0]
+                    cache_key = self._movie_cache_key(grp["query"], grp["year"])
+                    self._movie_cache[cache_key] = full
+                except Exception as ex:
+                    for e in grp["entries"]:
+                        e["status"]    = "error"
+                        e["error_msg"] = str(ex)
+                    continue
+            else:
+                for e in grp["entries"]:
+                    e["status"]    = "error"
+                    e["error_msg"] = "Skipped by user"
+
+        # Return entries whose title is now cached and ready for _do_lookup
+        return [e for e in self.file_entries
+                if e["status"] not in ("renamed", "error")
+                and e.get("parsed")
+                and self._movie_cache_key(
+                    strip_year_from_query(e["parsed"]["raw_title"])
+                    if self.opt_strip_year.get() else e["parsed"]["raw_title"],
+                    None if self.opt_strip_year.get() else e["parsed"].get("year")
+                ) in self._movie_cache]
+
+    def _movie_cache_key(self, query: str, year) -> str:
+        return f"{query.lower().strip()}|{year or ''}"
 
     def _do_lookup(self, entry):
         src = self._source_var.get()
@@ -1962,8 +2564,15 @@ class MoviesTab(BaseTab):
         query = p["raw_title"]
         if self.opt_strip_year.get():
             query = strip_year_from_query(query)
-        # When stripping year for search, still pass the parsed year for filtering
         search_year = p.get("year") if not self.opt_strip_year.get() else None
+
+        # ── Check session cache — skip repeat lookups for same title ─────
+        if not hasattr(self, "_movie_cache"):
+            self._movie_cache = {}
+        cache_key = self._movie_cache_key(query, search_year)
+        if cache_key in self._movie_cache:
+            self._finish_movie_lookup(entry, self._movie_cache[cache_key])
+            return
 
         if src == "TheTVDB":
             results = tvdb_search_movies(query, search_year)
@@ -1974,8 +2583,12 @@ class MoviesTab(BaseTab):
             if search_year and top["year"] != str(search_year) and len(results) > 1:
                 raise LookupNotFoundError(
                     f"Multiple matches for '{query}'", query)
-            full = tvdb_get_movie(top["id"])
-            self._finish_movie_lookup(entry, full)
+            # TheTVDB search result has title+year — skip extra detail call
+            # when the result looks complete
+            if top.get("title") and top.get("year","????") != "????":
+                full = top
+            else:
+                full = tvdb_get_movie(top["id"])
         else:
             key = self.api_key_var.get().strip()
             if not key:
@@ -1988,8 +2601,18 @@ class MoviesTab(BaseTab):
             if search_year and top["year"] != str(search_year) and len(results) > 1:
                 raise LookupNotFoundError(
                     f"Multiple matches for '{query}'", query)
-            full = omdb_get_movie(top["id"], key)
-            self._finish_movie_lookup(entry, full)
+            # OMDb search already has title+year; only fetch detail when
+            # the title match is ambiguous
+            q_norm    = query.lower().strip()
+            t_norm    = top["title"].lower().strip()
+            confident = (q_norm == t_norm or q_norm in t_norm or t_norm in q_norm)
+            if confident and top.get("title") and top.get("year","????") != "????":
+                full = top
+            else:
+                full = omdb_get_movie(top["id"], key)
+
+        self._movie_cache[cache_key] = full
+        self._finish_movie_lookup(entry, full)
 
     def _finish_movie_lookup(self, entry, result: dict):
         p     = entry["parsed"]
@@ -2036,12 +2659,18 @@ class MoviesTab(BaseTab):
         if self.opt_resolution.get():  parts.append("1080p")
         if self.opt_video_codec.get(): parts.append("HEVC")
         if self.opt_audio_codec.get(): parts.append("5.1")
-        self.preview_label.config(text=" - ".join(parts)+".mkv")
+        fname = " - ".join(parts) + ".mkv"
+        if self.opt_create_movie_folder.get():
+            self.preview_label.config(text=f"Movie Title (2024)/\n  {fname}")
+        else:
+            self.preview_label.config(text=fname)
 
 
 # ── History Dialog ───────────────────────────────────────────────────────────
 class HistoryDialog(Toplevel):
     """Shows all renamed TV and Movie files from the saved history."""
+
+    ROW_H = 34   # pixel height of each row
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -2050,23 +2679,26 @@ class HistoryDialog(Toplevel):
         self.configure(bg=BG_DARK)
         self.resizable(True, True)
         self.grab_set()
-        self._filter_var = StringVar()
-        self._type_var   = StringVar(value="All")
-        self._all        = load_config().get("history", [])
+        self._filter_var  = StringVar()
+        self._type_var    = StringVar(value="All")
+        self._all         = load_config().get("history", [])
+        self._filtered    = self._all   # current filtered view
+        self._filter_job  = None        # debounce timer id
         self._build()
         self._render(self._all)
 
+    # ── Build chrome (header, filter bar, column headers, status bar) ──────
     def _build(self):
         # Header
         hdr = Frame(self, bg=BG_PANEL, height=52)
         hdr.pack(fill=X); hdr.pack_propagate(False)
         Frame(hdr, bg=ACCENT, width=4).pack(side=LEFT, fill=Y)
-        Label(hdr, text="Rename History", font=("Segoe UI",13,"bold"),
+        Label(hdr, text="Rename History", font=("Segoe UI", 13, "bold"),
               fg=ACCENT, bg=BG_PANEL).pack(side=LEFT, padx=14)
-        Label(hdr, text=f"  {len(self._all)} total entries",
-              font=FONT_SMALL, fg=MUTED, bg=BG_PANEL).pack(side=LEFT, pady=(6,0))
+        self._total_lbl = Label(hdr, text=f"  {len(self._all)} total entries",
+                                font=FONT_SMALL, fg=MUTED, bg=BG_PANEL)
+        self._total_lbl.pack(side=LEFT, pady=(6, 0))
 
-        # Clear history button (right side of header)
         clr = Label(hdr, text="🗑 Clear History", font=FONT_SMALL,
                     fg=ERROR, bg=BG_PANEL, cursor="hand2", padx=14)
         clr.pack(side=RIGHT)
@@ -2078,7 +2710,6 @@ class HistoryDialog(Toplevel):
         fb = Frame(self, bg=BG_PANEL, height=40)
         fb.pack(fill=X); fb.pack_propagate(False)
 
-        # Search box
         sf = Frame(fb, bg=BG_SURFACE, bd=0, highlightthickness=1,
                    highlightbackground=BORDER)
         sf.pack(side=LEFT, padx=12, pady=6, fill=X, expand=True)
@@ -2086,16 +2717,16 @@ class HistoryDialog(Toplevel):
               bg=BG_SURFACE, padx=6).pack(side=LEFT)
         Entry(sf, textvariable=self._filter_var, font=FONT_MONO_SM,
               bg=BG_SURFACE, fg=TEXT, bd=0, insertbackground=ACCENT,
-              highlightthickness=0).pack(side=LEFT, fill=X, expand=True, padx=(0,6), pady=4)
-        self._filter_var.trace_add("write", lambda *_: self._apply_filter())
+              highlightthickness=0).pack(side=LEFT, fill=X, expand=True,
+                                         padx=(0, 6), pady=4)
+        self._filter_var.trace_add("write", lambda *_: self._debounce_filter())
 
-        # Type filter
         for label in ("All", "TV", "Movie"):
             btn = Label(fb, text=label, font=FONT_SMALL,
-                        fg=ACCENT if label=="All" else MUTED,
+                        fg=ACCENT if label == "All" else MUTED,
                         bg=BG_PANEL, cursor="hand2", padx=10)
             btn.pack(side=LEFT, pady=8)
-            btn.bind("<Button-1>", lambda e, l=label, b=btn: self._set_type(l))
+            btn.bind("<Button-1>", lambda e, l=label: self._set_type(l))
         self._type_btns = {c.cget("text"): c for c in fb.winfo_children()
                            if isinstance(c, Label)}
 
@@ -2104,102 +2735,895 @@ class HistoryDialog(Toplevel):
         # Column headers
         ch = Frame(self, bg=BG_PANEL, height=30)
         ch.pack(fill=X); ch.pack_propagate(False)
-        for text, x, w in [("TYPE",8,50),("ORIGINAL FILENAME",66,380),
-                            ("RENAMED TO",454,380),("DATE",842,100)]:
+        for text, x, w in [("TYPE", 8, 50), ("ORIGINAL FILENAME", 66, 380),
+                            ("RENAMED TO", 454, 380), ("DATE", 842, 100)]:
             Label(ch, text=text, font=FONT_SMALL, fg=MUTED,
                   bg=BG_PANEL, anchor=W).place(x=x, y=7, width=w)
         Frame(self, bg=BORDER, height=1).pack(fill=X)
 
-        # Scrollable list
+        # Virtual canvas — rows are drawn as canvas text, not widgets
         lf = Frame(self, bg=BG_DARK)
         lf.pack(fill=BOTH, expand=True)
-        self._canvas = Canvas(lf, bg=BG_DARK, highlightthickness=0, bd=0)
-        sb = Scrollbar(lf, orient=VERTICAL, command=self._canvas.yview,
-                       bg=BG_SURFACE, troughcolor=BG_DARK)
-        self._canvas.configure(yscrollcommand=sb.set)
-        sb.pack(side=RIGHT, fill=Y)
-        self._canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        self._inner = Frame(self._canvas, bg=BG_DARK)
-        self._cwin  = self._canvas.create_window((0,0), window=self._inner, anchor=NW)
-        self._inner.bind("<Configure>",
-            lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>",
-            lambda e: self._canvas.itemconfig(self._cwin, width=e.width))
-        self._canvas.bind_all("<MouseWheel>",
-            lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)),"units"))
 
-        # Status / count bar
+        self._sb = Scrollbar(lf, orient=VERTICAL, bg=BG_SURFACE,
+                             troughcolor=BG_DARK)
+        self._sb.pack(side=RIGHT, fill=Y)
+
+        self._canvas = Canvas(lf, bg=BG_DARK, highlightthickness=0, bd=0,
+                              yscrollcommand=self._on_yscroll)
+        self._canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        self._sb.config(command=self._on_scrollbar)
+
+        self._canvas.bind("<Configure>",   lambda e: self._on_canvas_resize())
+        self._canvas.bind("<MouseWheel>",
+                          lambda e: self._scroll_wheel(e.delta))
+
+        # Status bar
         Frame(self, bg=BORDER, height=1).pack(fill=X)
         bot = Frame(self, bg=BG_PANEL, height=30)
         bot.pack(fill=X, side=BOTTOM); bot.pack_propagate(False)
         self._count_lbl = Label(bot, text="", font=FONT_SMALL,
-                                 fg=TEXT_DIM, bg=BG_PANEL, anchor=W, padx=12)
+                                fg=TEXT_DIM, bg=BG_PANEL, anchor=W, padx=12)
         self._count_lbl.pack(side=LEFT, fill=Y)
-        Label(bot, text="Close", font=FONT_SMALL, fg=MUTED,
-              bg=BG_PANEL, cursor="hand2", padx=16).pack(side=RIGHT)
-        bot.winfo_children()[-1].bind("<Button-1>", lambda e: self.destroy())
+        close = Label(bot, text="Close", font=FONT_SMALL, fg=MUTED,
+                      bg=BG_PANEL, cursor="hand2", padx=16)
+        close.pack(side=RIGHT)
+        close.bind("<Button-1>", lambda e: self.destroy())
+
+        self._top_row   = 0     # index of first visible row
+        self._drawn_ids = []    # canvas item ids currently on screen
+
+    # ── Virtual rendering ─────────────────────────────────────────────────
+    def _render(self, entries: list):
+        """Switch to a new data set and repaint from the top."""
+        self._filtered = entries
+        self._top_row  = 0
+        self._count_lbl.config(
+            text=f"  {len(entries)} entr{'y' if len(entries)==1 else 'ies'}")
+        self._update_scrollbar()
+        self._paint()
+
+    def _update_scrollbar(self):
+        n   = len(self._filtered)
+        if n == 0:
+            self._sb.set(0.0, 1.0)
+            return
+        ch  = max(1, self._canvas.winfo_height())
+        vis = ch / (n * self.ROW_H)
+        top = self._top_row / n
+        self._sb.set(top, min(1.0, top + vis))
+
+    def _paint(self):
+        """Draw only the rows visible in the current viewport."""
+        c = self._canvas
+        c.delete("all")
+        self._drawn_ids = []
+
+        entries = self._filtered
+        if not entries:
+            c.create_text(c.winfo_width() // 2, 60,
+                          text="No history entries found",
+                          fill=MUTED, font=FONT_SMALL, anchor=CENTER)
+            return
+
+        ch    = max(1, c.winfo_height())
+        cw    = max(1, c.winfo_width())
+        n     = len(entries)
+        first = self._top_row
+        last  = min(n, first + ch // self.ROW_H + 2)
+
+        for i in range(first, last):
+            h   = entries[i]
+            y0  = (i - first) * self.ROW_H
+            y1  = y0 + self.ROW_H
+            bg  = BG_ROW if i % 2 == 0 else BG_ROW_ALT
+
+            # Row background
+            c.create_rectangle(0, y0, cw, y1, fill=bg, outline="", tags="row")
+
+            kind  = h.get("type", "?")
+            color = ACCENT if kind == "TV" else ACCENT_BLUE
+            cy    = y0 + self.ROW_H // 2
+
+            c.create_text(8,   cy, text=kind,               fill=color,   font=("Segoe UI", 8, "bold"), anchor=W)
+            c.create_text(66,  cy, text=h.get("original",""), fill=TEXT_DIM, font=FONT_MONO_SM,          anchor=W)
+            c.create_text(454, cy, text=h.get("renamed",""),  fill=SUCCESS,  font=FONT_MONO_SM,          anchor=W)
+            c.create_text(842, cy, text=h.get("timestamp",""),fill=MUTED,    font=("Segoe UI", 8),       anchor=W)
+
+            # Divider
+            c.create_line(0, y1, cw, y1, fill=BORDER, width=1)
+
+    def _on_canvas_resize(self):
+        self._update_scrollbar()
+        self._paint()
+
+    def _on_yscroll(self, first, last):
+        self._sb.set(first, last)
+
+    def _on_scrollbar(self, *args):
+        """Handle scrollbar drag and arrow clicks."""
+        n = len(self._filtered)
+        if n == 0:
+            return
+        if args[0] == "moveto":
+            frac = float(args[1])
+            self._top_row = max(0, min(n - 1, int(frac * n)))
+        elif args[0] == "scroll":
+            amount = int(args[1])
+            unit   = args[2]
+            if unit == "units":
+                self._top_row = max(0, min(n - 1, self._top_row + amount))
+            elif unit == "pages":
+                ch   = max(1, self._canvas.winfo_height())
+                page = max(1, ch // self.ROW_H)
+                self._top_row = max(0, min(n - 1, self._top_row + amount * page))
+        self._update_scrollbar()
+        self._paint()
+
+    def _scroll_wheel(self, delta):
+        n     = len(self._filtered)
+        lines = -3 if delta > 0 else 3
+        self._top_row = max(0, min(max(0, n - 1), self._top_row + lines))
+        self._update_scrollbar()
+        self._paint()
+
+    # ── Filter / type ─────────────────────────────────────────────────────
+    def _debounce_filter(self):
+        if self._filter_job:
+            self.after_cancel(self._filter_job)
+        self._filter_job = self.after(180, self._apply_filter)
 
     def _set_type(self, label: str):
         self._type_var.set(label)
-        # Update button colours
         for txt, btn in self._type_btns.items():
-            btn.configure(fg=ACCENT if txt==label else MUTED)
+            btn.configure(fg=ACCENT if txt == label else MUTED)
         self._apply_filter()
 
     def _apply_filter(self):
         q    = self._filter_var.get().lower()
         kind = self._type_var.get()
         filtered = [h for h in self._all
-                    if (kind == "All" or h.get("type","") == kind)
-                    and (not q or q in h.get("original","").lower()
-                              or q in h.get("renamed","").lower())]
+                    if (kind == "All" or h.get("type", "") == kind)
+                    and (not q
+                         or q in h.get("original", "").lower()
+                         or q in h.get("renamed",  "").lower())]
         self._render(filtered)
-
-    def _render(self, entries: list):
-        for w in self._inner.winfo_children():
-            w.destroy()
-
-        if not entries:
-            Label(self._inner, text="No history entries found",
-                  font=FONT_SMALL, fg=MUTED, bg=BG_DARK).pack(pady=40)
-            self._count_lbl.config(text="0 entries")
-            return
-
-        for i, h in enumerate(entries):
-            bg   = BG_ROW if i%2==0 else BG_ROW_ALT
-            row  = Frame(self._inner, bg=bg, height=34)
-            row.pack(fill=X); row.pack_propagate(False)
-
-            kind  = h.get("type","?")
-            color = ACCENT if kind=="TV" else ACCENT_BLUE
-            Label(row, text=kind, font=("Segoe UI",8,"bold"),
-                  fg=color, bg=bg, width=5, anchor=W).place(x=8, y=9)
-
-            orig = h.get("original","")
-            Label(row, text=orig, font=FONT_MONO_SM, fg=TEXT_DIM,
-                  bg=bg, anchor=W).place(x=66, y=9, width=380)
-
-            new = h.get("renamed","")
-            Label(row, text=new, font=FONT_MONO_SM, fg=SUCCESS,
-                  bg=bg, anchor=W).place(x=454, y=9, width=380)
-
-            ts = h.get("timestamp","")
-            Label(row, text=ts, font=("Segoe UI",8),
-                  fg=MUTED, bg=bg, anchor=W).place(x=842, y=10, width=120)
-
-            Frame(self._inner, bg=BORDER, height=1).pack(fill=X)
-
-        self._count_lbl.config(text=f"  {len(entries)} entr{'y' if len(entries)==1 else 'ies'}")
-        self._canvas.update_idletasks()
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
 
     def _clear_history(self):
         if messagebox.askyesno("Clear History",
                 "Delete all rename history?\nThis cannot be undone.", parent=self):
             save_config({"history": []})
-            self._all = []
+            self._all      = []
+            self._filtered = []
+            self._total_lbl.config(text="  0 total entries")
             self._render([])
-            self._count_lbl.config(text="  0 entries")
+
+
+
+
+
+# ── Embedded README content ───────────────────────────────────────────────────
+README_CONTENT = """# 🎬 PlexBot v1.06
+Automatic Media File Renamer for Plex
+Powered by DAT — Dans Automation Tools
+
+Stop renaming files by hand. PlexBot does it in seconds.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ WHAT IS PLEXBOT?
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PlexBot is a desktop application that takes your messy downloaded video
+filenames and automatically renames them into clean, Plex-compatible
+formats. It looks up episode titles and movie names from multiple online
+databases, optionally tags files with resolution and codec info, organises
+them into the correct folder structure, and handles subtitle files
+alongside the video — all running in parallel so large batches complete
+fast. Tested with 4,000+ files renamed in a single session.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ HOW IT WORKS — TV SHOWS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PlexBot reads the filename and extracts the show name, season, and episode
+number from patterns like:
+
+    Happys.Place.S02E13.1080p.HEVC.x265-MeGusta.mkv
+    Band.of.Brothers.S01E01.720p.mkv
+
+It queries TVmaze or TheTVDB for the episode title and renames the file:
+
+    Happy's Place (2024) - S02E13 - A New Chapter - 1080p - HEVC - 5.1.mkv
+
+Files are organised into a structured folder hierarchy:
+
+    TV Shows\\
+      └── Band of Brothers (2001)\\
+            └── Season 01\\
+                  ├── Band of Brothers (2001) - S01E01 - Currahee.mkv
+                  └── Band of Brothers (2001) - S01E01 - Currahee.en.srt
+
+Season folders always use the English word "Season" regardless of
+content language.
+
+Smart grouping: episodes of the same show share a single show-search
+call. 20 episodes of one show = 1 search + 20 parallel episode fetches,
+not 20 separate searches.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ HOW IT WORKS — MOVIES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PlexBot extracts the movie title and year from filenames like:
+
+    Inception.2010.1080p.BluRay.x264.mkv
+    The.Matrix.1999.REMASTERED.mkv
+
+It queries OMDb or TheTVDB, then creates a per-movie subfolder:
+
+    Movies\\
+      └── Inception (2010)\\
+            ├── Inception (2010) - 1080p - H.264 - 5.1.mkv
+            └── Inception (2010).en.srt
+
+Performance: all unique movie titles are looked up in parallel before
+renaming begins. Duplicate titles (multiple files, same movie) only hit
+the API once. When the top search result is a confident match, the
+redundant detail fetch is skipped — halving the API calls per movie.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ LOOKUP VIA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Both tabs have a LOOKUP VIA selector in the toolbar.
+
+  TV Shows:  TVmaze (default)  ·  TheTVDB
+  Movies:    OMDb (default)    ·  TheTVDB
+
+TVmaze — free, no key required, works immediately.
+TheTVDB — built-in key, no setup required.
+OMDb — requires a free API key (see API Keys section below).
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ API KEYS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TVmaze       — No key needed. Works straight away.
+TheTVDB      — Built-in key. No setup needed.
+OMDb Movies  — Free key required (1,000 lookups/day).
+
+To get an OMDb key:
+  1. Go to omdbapi.com/apikey.aspx
+  2. Select the Free tier and enter your email
+  3. Your key arrives by email almost immediately
+  4. Open the Movies tab and paste the key into OMDB API KEY
+
+The key is saved automatically — you only need to enter it once.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SETTINGS PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Click the ▶ SETTINGS header in the right-hand panel to expand settings.
+
+FILE MODE
+  ✂  Move               — File is moved and renamed. Original is removed.
+  ⎘  Copy & Keep        — Renamed copy made at destination. Original kept.
+
+FOLDER STRUCTURE (TV Shows)
+  Include year in show folder & filename
+  → Show Name (YYYY) / Season 01 / Show Name (YYYY) - S01E01 - Title.mkv
+  On by default.
+
+FOLDER STRUCTURE (Movies)
+  Create per-movie subfolder
+  → Movie Title (YYYY) / Movie Title (YYYY).mkv
+  On by default.
+
+INCLUDE IN FILENAME
+  Each tag can be toggled independently:
+  · Video Resolution  (e.g. 1080p, 2160p)
+  · Video Codec       (e.g. HEVC, H.264)
+  · Audio Channels    (e.g. 5.1, 7.1, 2.0)
+
+SEARCH OPTIONS
+  Strip year from search query
+  → Removes years like (2005) from search terms to avoid narrow results.
+  → On by default.
+
+  Concurrent lookups
+  → Number of files looked up simultaneously: 5 / 10 / 15 / 20 / 25 / 30
+  → Default is 5. Higher values speed up large batches significantly.
+  → The same thread count is used for both lookups and file renaming.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ PERFORMANCE — LARGE BATCHES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PlexBot is optimised for large batches:
+
+  · TV: one show-search per unique show, not per episode. All show
+    searches run in parallel, then episode fetches run in parallel.
+
+  · Movies: all unique titles searched in parallel. Duplicate titles
+    (same movie, multiple files) only searched once per session.
+    Confident matches skip the detail fetch, halving API calls.
+
+  · Lookup UI updates are debounced — rapid completions are coalesced
+    into one screen repaint every 100 ms, keeping the UI responsive.
+
+  · Rename operations run in parallel with the same thread count.
+    Per-file UI updates are debounced at 150 ms intervals.
+
+  · History dialog uses virtual rendering — opening 4,000+ history
+    entries is instant because only visible rows are ever drawn.
+
+  · Apply & Rename button stays disabled until the full batch completes.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SMART LOOKUP PICKER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When PlexBot cannot confidently match a filename to a single result,
+it pauses and opens a search dialog centred over the app window:
+
+  · A pre-filled search box with the detected title, ready to edit
+  · A scrollable list of matches showing title, year, and description
+  · Click any result to select it, then confirm
+  · The rest of the batch continues after you confirm or skip
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ RIGHT-CLICK MENU
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Right-click any file row during or after a lookup:
+
+  🔍 Manual Search…     Open picker pre-filled with detected name
+  🔄 Re-run Auto Lookup  Retry the automatic lookup for this file
+  ✕  Remove from list   Remove this entry without processing it
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ RETRY ERRORS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+After a lookup completes, any files that failed show an ERROR badge.
+The lookup button changes to 🔄 Retry Errors (N). Click it to retry
+only the errored files — successfully looked-up files stay untouched.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FOLDER CLEANUP  (🧹 button in header)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Removes junk sidecar files recursively from any folder.
+
+Files removed:  .txt  .idx  .nfo  .jpg  .htm  .png  .url  .bif
+Also removes:   Empty subfolders · System Volume Information
+
+How to use:
+  1. The folder defaults to the last folder you loaded files from
+  2. Click 🔍 Scan to preview everything that will be deleted
+  3. Review the list, then click 🗑 Delete All Listed Files
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ RENAME HISTORY  (📋 button in header)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Every rename is logged. Click 📋 History to open the history window.
+The window uses virtual rendering and opens instantly even with
+thousands of entries. You can:
+
+  · See original and new filename side by side
+  · Filter by All, TV, or Movie
+  · Search by any part of the filename
+  · Clear the full history when no longer needed
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SUPPORTED FILE TYPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Video:     .mkv .mp4 .avi .mov .m4v .wmv .ts .m2ts .mpg .mpeg
+Subtitles: .srt .sub .ass .ssa .vtt .idx .sup .pgs
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CONFIGURATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Settings are saved automatically to:
+  Documents\\PlexBot\\plexbot_config.json
+
+This file stores your OMDb API key, destination folders, all
+preferences, and the full rename history. Created automatically
+on first run.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ GETTING STARTED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Run from source:
+  pip install requests tkinterdnd2
+  python plexbot.py
+
+Build EXE:
+  Put plexbot.py + plexbot.ico + Build_exe.bat in the same folder
+  Double-click Build_exe.bat — PlexBot.exe appears in ~2 minutes
+
+FFmpeg (optional):
+  winget install ffmpeg
+  Enables resolution and codec tag detection. Without it, renaming
+  still works — just without technical tags in filenames.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CONTACT & SUPPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Click the ✉ Contact button in the app header to copy the email
+address, or write to DMurr5050@gmail.com directly.
+
+If PlexBot saves you time, a small donation is appreciated —
+click 💛 Donate via PayPal in the app header.
+
+Disclaimer: PlexBot is not affiliated with Plex Inc., TVmaze,
+OMDb, or TheTVDB in any way.
+"""
+
+# ── Help / README Dialog ──────────────────────────────────────────────────────
+class ReadmeDialog(Toplevel):
+    """Scrollable in-app help viewer displaying README_CONTENT."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("PlexBot — Help & Documentation")
+        self.geometry("780x640")
+        self.configure(bg=BG_DARK)
+        self.resizable(True, True)
+        self.grab_set()
+        self._build()
+
+    def _build(self):
+        # ── Header ───────────────────────────────────────────────────────
+        hdr = Frame(self, bg=BG_PANEL, height=52)
+        hdr.pack(fill=X); hdr.pack_propagate(False)
+        Frame(hdr, bg=ACCENT_BLUE, width=4).pack(side=LEFT, fill=Y)
+        Label(hdr, text="❓  Help & Documentation",
+              font=("Segoe UI", 13, "bold"),
+              fg=ACCENT_BLUE, bg=BG_PANEL).pack(side=LEFT, padx=14)
+        Label(hdr, text=f"PlexBot v{VERSION}",
+              font=FONT_SMALL, fg=MUTED, bg=BG_PANEL).pack(side=LEFT)
+
+        # Close button
+        close_lbl = Label(hdr, text="✕  Close", font=FONT_SMALL,
+                          fg=MUTED, bg=BG_PANEL, cursor="hand2", padx=16)
+        close_lbl.pack(side=RIGHT)
+        close_lbl.bind("<Button-1>", lambda e: self.destroy())
+        close_lbl.bind("<Enter>",    lambda e: close_lbl.configure(fg=WHITE))
+        close_lbl.bind("<Leave>",    lambda e: close_lbl.configure(fg=MUTED))
+
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+
+        # ── Scrollable text area ──────────────────────────────────────────
+        tf = Frame(self, bg=BG_SURFACE)
+        tf.pack(fill=BOTH, expand=True, padx=0, pady=0)
+
+        sb = Scrollbar(tf, orient=VERTICAL, bg=BG_SURFACE, troughcolor=BG_DARK)
+        sb.pack(side=RIGHT, fill=Y)
+
+        txt = Text(tf, bg=BG_SURFACE, fg=TEXT, font=("Consolas", 9),
+                   bd=0, padx=20, pady=16,
+                   yscrollcommand=sb.set, wrap=WORD,
+                   insertbackground=ACCENT_BLUE,
+                   selectbackground=ACCENT_BLUE, selectforeground="#000",
+                   highlightthickness=0, cursor="arrow")
+        txt.pack(fill=BOTH, expand=True)
+        sb.config(command=txt.yview)
+
+        # ── Insert content with styled sections ───────────────────────────
+        txt.tag_configure("title",   font=("Segoe UI", 14, "bold"), foreground=ACCENT,
+                          spacing3=6)
+        txt.tag_configure("section", font=("Segoe UI", 9,  "bold"), foreground=ACCENT_BLUE,
+                          spacing1=10, spacing3=4)
+        txt.tag_configure("code",    font=("Consolas", 8),          foreground=SUCCESS,
+                          background="#0d1a0d", lmargin1=24, lmargin2=24, spacing1=1, spacing3=1)
+        txt.tag_configure("body",    font=("Segoe UI", 9),          foreground=TEXT,
+                          lmargin1=8, lmargin2=8, spacing1=2)
+        txt.tag_configure("dim",     font=("Segoe UI", 8),          foreground=TEXT_DIM,
+                          lmargin1=8)
+        txt.tag_configure("rule",    foreground=BORDER)
+
+        for line in README_CONTENT.splitlines():
+            if line.startswith("# "):
+                txt.insert(END, line[2:] + "\n", "title")
+            elif line.startswith("━"):
+                # Section header follows the rule line
+                txt.insert(END, line + "\n", "rule")
+            elif line.strip().startswith("·") or line.strip().startswith("→"):
+                txt.insert(END, line + "\n", "dim")
+            elif (line.startswith("    ") or line.startswith("\t")) and line.strip():
+                txt.insert(END, line + "\n", "code")
+            elif line.strip() == "":
+                txt.insert(END, "\n", "body")
+            else:
+                txt.insert(END, line + "\n", "body")
+
+        txt.configure(state=DISABLED)
+
+        # Mouse-wheel scrolling
+        txt.bind("<MouseWheel>",
+                 lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        # ── Bottom bar ────────────────────────────────────────────────────
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+        bot = Frame(self, bg=BG_PANEL, height=36)
+        bot.pack(fill=X, side=BOTTOM); bot.pack_propagate(False)
+        Label(bot,
+              text="Powered by DAT (Dans Automation Tools)  ·  DMurr5050@gmail.com",
+              font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=16, pady=8)
+
+
+# ── Folder Cleanup Dialog ─────────────────────────────────────────────────────
+CLEANUP_EXTENSIONS = {'.txt', '.idx', '.nfo', '.jpg', '.htm', '.png', '.url', '.bif'}
+
+class CleanupDialog(Toplevel):
+    """
+    Scans a chosen folder recursively and removes junk sidecar files
+    (.txt .idx .nfo .jpg .htm .png .url .bif) plus leftover empty folders,
+    mirroring the behaviour of the JD Downloads cleanup batch file.
+    """
+
+    def __init__(self, parent, default_folder: str = ""):
+        super().__init__(parent)
+        self.title("Folder Cleanup")
+        self.geometry("760x580")
+        self.configure(bg=BG_DARK)
+        self.resizable(True, True)
+        self.grab_set()
+        self._folder_var  = StringVar(value=default_folder)
+        self._scan_result = []   # list of Path objects found
+        self._running     = False
+        self._build()
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+    def _build(self):
+        # Header
+        hdr = Frame(self, bg=BG_PANEL, height=52)
+        hdr.pack(fill=X); hdr.pack_propagate(False)
+        Frame(hdr, bg=ERROR, width=4).pack(side=LEFT, fill=Y)
+        Label(hdr, text="🧹  Folder Cleanup", font=("Segoe UI", 13, "bold"),
+              fg=ERROR, bg=BG_PANEL).pack(side=LEFT, padx=14)
+        Label(hdr, text="Removes junk sidecar files and empty folders",
+              font=FONT_SMALL, fg=MUTED, bg=BG_PANEL).pack(side=LEFT)
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+
+        # Folder picker
+        fp = Frame(self, bg=BG_PANEL)
+        fp.pack(fill=X, padx=16, pady=10)
+        Label(fp, text="FOLDER TO CLEAN", font=("Segoe UI", 9, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, pady=(0, 4))
+        ff = Frame(fp, bg=BG_SURFACE, bd=0, highlightthickness=1,
+                   highlightbackground=BORDER)
+        ff.pack(fill=X)
+        Entry(ff, textvariable=self._folder_var, font=FONT_MONO_SM,
+              bg=BG_SURFACE, fg=TEXT, bd=0, insertbackground=ERROR,
+              highlightthickness=0).pack(side=LEFT, fill=X, expand=True, padx=8, pady=6)
+        bb = Label(ff, text="…", font=FONT_BOLD, fg=ERROR,
+                   bg=BG_SURFACE, cursor="hand2", padx=10)
+        bb.pack(side=RIGHT)
+        bb.bind("<Button-1>", lambda e: self._pick_folder())
+
+        # Extensions info
+        ext_str = "  ".join(f"*{x}" for x in sorted(CLEANUP_EXTENSIONS))
+        Label(fp, text=f"Will delete:  {ext_str}",
+              font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(anchor=W, pady=(4, 0))
+        Label(fp, text="Also removes: empty subfolders · System Volume Information",
+              font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(anchor=W)
+
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+
+        # Scan / results area
+        Label(self, text="SCAN RESULTS", font=("Segoe UI", 9, "bold"),
+              fg=MUTED, bg=BG_DARK).pack(anchor=W, padx=16, pady=(10, 4))
+
+        list_frame = Frame(self, bg=BG_DARK)
+        list_frame.pack(fill=BOTH, expand=True, padx=16, pady=(0, 8))
+        self._canvas = Canvas(list_frame, bg=BG_DARK, highlightthickness=0, bd=0)
+        sb = Scrollbar(list_frame, orient=VERTICAL, command=self._canvas.yview,
+                       bg=BG_SURFACE, troughcolor=BG_DARK)
+        self._canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=RIGHT, fill=Y)
+        self._canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        self._inner = Frame(self._canvas, bg=BG_DARK)
+        self._cwin  = self._canvas.create_window((0, 0), window=self._inner, anchor=NW)
+        self._inner.bind("<Configure>",
+            lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+            lambda e: self._canvas.itemconfig(self._cwin, width=e.width))
+        self._canvas.bind_all("<MouseWheel>",
+            lambda e: self._canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        self._placeholder = Label(self._inner,
+            text="Choose a folder and click Scan to preview what will be removed.",
+            font=FONT_SMALL, fg=MUTED, bg=BG_DARK)
+        self._placeholder.pack(pady=40)
+
+        # Bottom bar
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+        bot = Frame(self, bg=BG_PANEL)
+        bot.pack(fill=X, padx=16, pady=10)
+
+        self._status_lbl = Label(bot, text="", font=FONT_SMALL,
+                                  fg=TEXT_DIM, bg=BG_PANEL)
+        self._status_lbl.pack(side=LEFT)
+
+        cancel_lbl = Label(bot, text="Close", font=FONT_SMALL,
+                           fg=MUTED, bg=BG_PANEL, cursor="hand2", padx=12, pady=8)
+        cancel_lbl.pack(side=RIGHT)
+        cancel_lbl.bind("<Button-1>", lambda e: self.destroy())
+
+        self._run_btn = Label(bot, text="🗑  Delete All Listed Files",
+                              font=FONT_BOLD, fg="#000", bg=ERROR,
+                              cursor="hand2", padx=20, pady=8)
+        self._run_btn.pack(side=RIGHT, padx=(0, 8))
+        self._run_btn.bind("<Button-1>", lambda e: self._run_cleanup())
+        self._run_btn.bind("<Enter>",
+            lambda e: self._run_btn.configure(bg=self._lighten(ERROR)))
+        self._run_btn.bind("<Leave>",
+            lambda e: self._run_btn.configure(bg=ERROR))
+        self._set_run_btn_state(False)
+
+        self._scan_btn = Label(bot, text="🔍  Scan",
+                               font=FONT_BOLD, fg="#000", bg=ACCENT,
+                               cursor="hand2", padx=20, pady=8)
+        self._scan_btn.pack(side=RIGHT, padx=(0, 6))
+        self._scan_btn.bind("<Button-1>", lambda e: self._start_scan())
+        self._scan_btn.bind("<Enter>",
+            lambda e: self._scan_btn.configure(bg=self._lighten(ACCENT)))
+        self._scan_btn.bind("<Leave>",
+            lambda e: self._scan_btn.configure(bg=ACCENT))
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def _lighten(self, hc):
+        h = hc.lstrip("#")
+        r, g, b = int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+        return "#{:02x}{:02x}{:02x}".format(
+            min(255, int(r*1.15)), min(255, int(g*1.15)), min(255, int(b*1.15)))
+
+    def _pick_folder(self):
+        f = filedialog.askdirectory(title="Select folder to clean", parent=self)
+        if f:
+            self._folder_var.set(f)
+            self._scan_result.clear()
+            self._render_results([])
+            self._set_run_btn_state(False)
+
+    def _set_run_btn_state(self, enabled: bool):
+        if enabled:
+            self._run_btn.configure(fg="#000", bg=ERROR, cursor="hand2")
+        else:
+            self._run_btn.configure(fg=MUTED, bg=BG_SURFACE, cursor="arrow")
+
+    # ── Scan ──────────────────────────────────────────────────────────────────
+    def _start_scan(self):
+        folder = self._folder_var.get().strip()
+        if not folder:
+            messagebox.showwarning("No Folder", "Please choose a folder first.", parent=self)
+            return
+        root = Path(folder)
+        if not root.is_dir():
+            messagebox.showerror("Not Found", f"Folder not found:\n{root}", parent=self)
+            return
+        self._status_lbl.configure(text="Scanning…", fg=WARNING)
+        self._set_run_btn_state(False)
+        self._render_results([])
+        self.update_idletasks()
+        threading.Thread(target=self._scan_worker, args=(root,), daemon=True).start()
+
+    def _scan_worker(self, root: Path):
+        found_files  = []
+        found_folders = []
+        try:
+            # Collect matching files
+            for p in sorted(root.rglob("*")):
+                if p.is_file() and p.suffix.lower() in CLEANUP_EXTENSIONS:
+                    found_files.append(p)
+            # Collect empty dirs (deepest first) — skip root itself
+            for p in sorted(root.rglob("*"), key=lambda x: len(x.parts), reverse=True):
+                if p.is_dir() and p != root:
+                    try:
+                        if not any(p.iterdir()):
+                            found_folders.append(p)
+                    except PermissionError:
+                        pass
+            # Also flag System Volume Information
+            svi = root / "System Volume Information"
+            if svi.is_dir() and svi not in found_folders:
+                found_folders.append(svi)
+        except Exception as ex:
+            self.after(0, lambda: self._status_lbl.configure(
+                text=f"Scan error: {ex}", fg=ERROR))
+            return
+
+        self._scan_result = found_files + found_folders
+        self.after(0, lambda: self._scan_done(found_files, found_folders))
+
+    def _scan_done(self, files, folders):
+        total = len(files) + len(folders)
+        if total == 0:
+            self._status_lbl.configure(
+                text="✓  Nothing to clean — folder is already tidy.", fg=SUCCESS)
+            self._render_results([])
+        else:
+            self._status_lbl.configure(
+                text=f"Found {len(files)} file(s) and {len(folders)} empty folder(s) to remove.",
+                fg=WARNING)
+            self._render_results(files, folders)
+            self._set_run_btn_state(True)
+
+    def _render_results(self, files=(), folders=()):
+        for w in self._inner.winfo_children():
+            w.destroy()
+
+        if not files and not folders:
+            Label(self._inner,
+                  text="Choose a folder and click Scan to preview what will be removed.",
+                  font=FONT_SMALL, fg=MUTED, bg=BG_DARK).pack(pady=40)
+            self._canvas.update_idletasks()
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+            return
+
+        all_items = [(p, "file") for p in files] + [(p, "folder") for p in folders]
+        for i, (p, kind) in enumerate(all_items):
+            bg = BG_ROW if i % 2 == 0 else BG_ROW_ALT
+            row = Frame(self._inner, bg=bg)
+            row.pack(fill=X)
+            # Icon + type badge
+            icon = "📁" if kind == "folder" else self._ext_icon(p.suffix.lower())
+            Label(row, text=icon, font=("Segoe UI", 9),
+                  bg=bg, padx=8, pady=5).pack(side=LEFT)
+            # Extension badge
+            badge_fg = "#c06020" if kind == "folder" else "#6080c0"
+            badge_bg = "#2a1800" if kind == "folder" else "#0d1a2a"
+            tag = "DIR" if kind == "folder" else p.suffix.upper().lstrip(".")
+            Label(row, text=tag, font=("Segoe UI", 7, "bold"),
+                  fg=badge_fg, bg=badge_bg, padx=5, pady=2).pack(side=LEFT, padx=(0, 6))
+            # Path display — show relative path for readability
+            try:
+                folder = Path(self._folder_var.get())
+                display = str(p.relative_to(folder))
+            except ValueError:
+                display = str(p)
+            Label(row, text=display, font=FONT_MONO_SM, fg=TEXT_DIM,
+                  bg=bg, anchor=W).pack(side=LEFT, fill=X, expand=True, padx=(0, 10), pady=5)
+            Frame(self._inner, bg=BORDER, height=1).pack(fill=X)
+
+        self._canvas.update_idletasks()
+        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+
+    def _ext_icon(self, ext: str) -> str:
+        return {"jpg": "🖼", ".jpg": "🖼", ".png": "🖼", ".nfo": "📄",
+                ".txt": "📄", ".url": "🔗", ".htm": "🌐",
+                ".idx": "📋", ".bif": "📋"}.get(ext, "📄")
+
+    # ── Cleanup ───────────────────────────────────────────────────────────────
+    def _run_cleanup(self):
+        if self._running or not self._scan_result:
+            return
+        folder = self._folder_var.get().strip()
+        n = len(self._scan_result)
+        self._running = True
+        self._set_run_btn_state(False)
+        self._scan_btn.configure(fg=MUTED, bg=BG_SURFACE, cursor="arrow")
+        self._status_lbl.configure(text="Deleting…", fg=WARNING)
+        self.update_idletasks()
+        threading.Thread(target=self._cleanup_worker,
+                         args=(Path(folder), list(self._scan_result)),
+                         daemon=True).start()
+
+    def _cleanup_worker(self, root: Path, items: list):
+        deleted_files = 0
+        deleted_dirs  = 0
+        errors        = []
+        log_lines     = ["CLEANUP LOG", "=" * 60]
+
+        # ── Delete files ──────────────────────────────────────────────────
+        for p in items:
+            if not p.is_file():
+                continue
+            try:
+                # Clear read-only attribute before deleting (mirrors attrib -r)
+                try:
+                    p.chmod(p.stat().st_mode | 0o200)
+                except Exception:
+                    pass
+                p.unlink()
+                log_lines.append(f"  ✓  {p}")
+                deleted_files += 1
+            except Exception as ex:
+                log_lines.append(f"  ✗  {p}  —  {ex}")
+                errors.append(str(ex))
+
+        # ── Remove empty dirs (deepest first) ────────────────────────────
+        # Re-scan after file deletion so newly-emptied dirs are caught too
+        dirs_to_try = []
+        try:
+            for p in sorted(root.rglob("*"), key=lambda x: len(x.parts), reverse=True):
+                if p.is_dir() and p != root:
+                    dirs_to_try.append(p)
+            # Also System Volume Information
+            svi = root / "System Volume Information"
+            if svi.is_dir() and svi not in dirs_to_try:
+                dirs_to_try.insert(0, svi)
+        except Exception:
+            pass
+
+        for d in dirs_to_try:
+            try:
+                if not d.exists():
+                    continue
+                # Force-remove System Volume Information; otherwise only empty dirs
+                is_svi = d.name == "System Volume Information"
+                if is_svi:
+                    shutil.rmtree(str(d), ignore_errors=True)
+                    if not d.exists():
+                        log_lines.append(f"  🗑  {d}  [System Volume Information removed]")
+                        deleted_dirs += 1
+                else:
+                    if not any(d.iterdir()):
+                        d.rmdir()
+                        log_lines.append(f"  🗑  {d}  [empty folder removed]")
+                        deleted_dirs += 1
+            except Exception as ex:
+                errors.append(str(ex))
+
+        self.after(0, lambda: self._cleanup_done(deleted_files, deleted_dirs, errors, log_lines))
+
+    def _cleanup_done(self, files: int, dirs: int, errors: list, log_lines: list):
+        self._running = False
+        self._scan_result.clear()
+        self._render_results()
+
+        parts = []
+        if files: parts.append(f"{files} file(s) deleted")
+        if dirs:  parts.append(f"{dirs} folder(s) removed")
+        if errors: parts.append(f"{len(errors)} error(s)")
+        summary = "  ·  ".join(parts) if parts else "Nothing was deleted"
+
+        fg = SUCCESS if not errors else WARNING
+        self._status_lbl.configure(text=f"✓  Done — {summary}", fg=fg)
+
+        # Re-enable scan button
+        self._scan_btn.configure(fg="#000", bg=ACCENT, cursor="hand2")
+
+        # Show log
+        win = Toplevel(self); win.title("Cleanup Complete")
+        win.geometry("660x440"); win.configure(bg=BG_DARK); win.grab_set()
+        Label(win, text="Cleanup Complete", font=FONT_BOLD, fg=ERROR,
+              bg=BG_DARK).pack(anchor=W, padx=16, pady=(14, 6))
+        Frame(win, bg=BORDER, height=1).pack(fill=X, padx=16)
+        tf = Frame(win, bg=BG_SURFACE); tf.pack(fill=BOTH, expand=True, padx=16, pady=12)
+        sb_w = Scrollbar(tf); sb_w.pack(side=RIGHT, fill=Y)
+        txt = Text(tf, bg=BG_SURFACE, fg=SUCCESS, font=FONT_MONO, bd=0,
+                   padx=12, pady=10, yscrollcommand=sb_w.set,
+                   wrap=WORD, insertbackground=ERROR)
+        txt.pack(fill=BOTH, expand=True); sb_w.config(command=txt.yview)
+        txt.insert(END, "\n".join(log_lines))
+        txt.configure(state=DISABLED)
+        Button(win, text="Close", command=win.destroy, bg=BG_SURFACE, fg=TEXT,
+               font=FONT_SMALL, bd=0, padx=20, pady=8, cursor="hand2",
+               activebackground=BG_HOVER, activeforeground=WHITE).pack(pady=(0, 14))
 
 
 # ── Main Window ───────────────────────────────────────────────────────────────
@@ -2215,7 +3639,38 @@ class PlexBot(Tk):
         self.geometry("1100x760")
         self.minsize(900, 640)
         self.configure(bg=BG_DARK)
+        self.last_source_folder = ""   # updated whenever files are loaded
         self._build()
+        self._set_window_icon()
+
+    def _set_window_icon(self):
+        """Set the taskbar / titlebar icon from plexbot.ico (same folder as script)."""
+        # Locate the .ico next to the running script / frozen exe
+        if getattr(sys, "frozen", False):
+            base = Path(sys.executable).parent
+        else:
+            base = Path(__file__).parent
+
+        ico_path = base / "plexbot.ico"
+        if ico_path.exists():
+            try:
+                # iconbitmap works on Windows and shows in the taskbar
+                self.iconbitmap(str(ico_path))
+                return
+            except Exception:
+                pass
+
+        # Fallback: use the embedded PNG header icon via PhotoImage
+        # (works cross-platform but won't show in the Windows taskbar)
+        try:
+            import base64 as _b64
+            from tkinter import PhotoImage as _PI
+            _data = _b64.b64decode(HEADER_ICON_B64)
+            _img  = _PI(data=_b64.b64encode(_data))
+            self._taskbar_icon = _img   # keep reference
+            self.iconphoto(True, _img)
+        except Exception:
+            pass
 
     def _build(self):
         # Header
@@ -2311,6 +3766,25 @@ class PlexBot(Tk):
         hist_btn.bind("<Button-1>", lambda e: HistoryDialog(self))
         hist_btn.bind("<Enter>",    lambda e: hist_btn.configure(fg=WHITE))
         hist_btn.bind("<Leave>",    lambda e: hist_btn.configure(fg=MUTED))
+
+        # Help button (right side of header)
+        help_btn = Label(header, text="❓  Help", font=FONT_SMALL,
+                         fg=MUTED, bg=BG_PANEL, cursor="hand2", padx=16)
+        help_btn.pack(side=RIGHT, pady=0)
+        help_btn.bind("<Button-1>", lambda e: ReadmeDialog(self))
+        help_btn.bind("<Enter>",    lambda e: help_btn.configure(fg=ACCENT_BLUE))
+        help_btn.bind("<Leave>",    lambda e: help_btn.configure(fg=MUTED))
+
+        # Cleanup button (right side of header)
+        clean_btn = Label(header, text="🧹  Cleanup", font=FONT_SMALL,
+                          fg=MUTED, bg=BG_PANEL, cursor="hand2", padx=16)
+        clean_btn.pack(side=RIGHT, pady=0)
+        def _open_cleanup(e=None):
+            default = self.last_source_folder or ""
+            CleanupDialog(self, default_folder=default)
+        clean_btn.bind("<Button-1>", lambda e: _open_cleanup())
+        clean_btn.bind("<Enter>",    lambda e: clean_btn.configure(fg=ERROR))
+        clean_btn.bind("<Leave>",    lambda e: clean_btn.configure(fg=MUTED))
 
         # Tabs
         style = ttk.Style()
