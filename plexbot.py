@@ -36,7 +36,15 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.07"
+VERSION       = "1.08"
+
+# ── GitHub auto-update settings ───────────────────────────────────────────────
+GITHUB_USER    = "dmurr5050"
+GITHUB_REPO    = "Plexbot"
+GITHUB_BRANCH  = "main"
+GITHUB_RAW_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/plexbot.py"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_PAGE = f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
 
 # ── Data-source options shown in the UI dropdowns ──────────────────────────
 TV_SOURCES    = ["TVmaze", "TheTVDB"]
@@ -3151,7 +3159,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.07
+README_CONTENT = """# 🎬 PlexBot v1.08
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -3251,6 +3259,30 @@ The key is saved automatically — you only need to enter it once.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ AUTO-UPDATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PlexBot checks GitHub for updates automatically on startup.
+
+  · Check runs in the background — no delay to launch
+  · If a newer version is found, a green banner appears below
+    the header: "PlexBot v1.0x is available — click to update"
+  · Click the banner to open the Update dialog
+  · Click ✕ on the banner to dismiss it
+
+Running from source (.py):
+  PlexBot downloads the new plexbot.py, verifies it, replaces
+  the current file, then offers to restart automatically.
+
+Running as PlexBot.exe:
+  The EXE cannot update itself. Clicking the banner opens the
+  GitHub Releases page so you can download the new EXE.
+
+Updates are hosted at:
+  github.com/dmurr5050/Plexbot
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SETTINGS PANEL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3312,8 +3344,8 @@ SEARCH OPTIONS
  SMART LOOKUP PICKER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-When PlexBot cannot confidently match a filename, a search dialog opens
-centred over the app window:
+When PlexBot cannot confidently match a filename, a search dialog
+opens centred over the app window:
 
   · Pre-filled search box, ready to edit
   · Scrollable list of matches with title, year, description
@@ -3862,6 +3894,212 @@ class CleanupDialog(Toplevel):
                activebackground=BG_HOVER, activeforeground=WHITE).pack(pady=(0, 14))
 
 
+
+# ── Auto-updater ──────────────────────────────────────────────────────────────
+def _parse_version(v: str):
+    """Convert '1.07' → (1, 7) for numeric comparison."""
+    try:
+        parts = str(v).lstrip("vV").strip().split(".")
+        return tuple(int(x) for x in parts)
+    except Exception:
+        return (0,)
+
+def fetch_latest_version() -> tuple:
+    """
+    Check GitHub releases API for the latest version tag.
+    Returns (version_string, download_url) or raises on failure.
+    Falls back to reading VERSION from raw plexbot.py if no release tag found.
+    """
+    # Try releases API first
+    try:
+        r = requests.get(GITHUB_API_URL,
+                         headers={"Accept": "application/vnd.github+json"},
+                         timeout=8)
+        if r.status_code == 200:
+            data = r.json()
+            tag = data.get("tag_name", "").lstrip("vV")
+            if tag:
+                return tag, GITHUB_RAW_URL
+    except Exception:
+        pass
+
+    # Fallback: read VERSION from raw source
+    r = requests.get(GITHUB_RAW_URL, timeout=10)
+    r.raise_for_status()
+    for line in r.text.splitlines():
+        if line.strip().startswith("VERSION"):
+            # e.g.  VERSION       = "1.07"
+            val = line.split("=", 1)[1].strip().strip('"').strip("'")
+            return val, GITHUB_RAW_URL
+    raise ValueError("Could not determine remote version")
+
+def download_update(dest_path: Path, progress_cb=None) -> bool:
+    """
+    Download the latest plexbot.py to dest_path.
+    progress_cb(pct) called with 0-100 during download.
+    Returns True on success.
+    """
+    r = requests.get(GITHUB_RAW_URL, stream=True, timeout=30)
+    r.raise_for_status()
+    total = int(r.headers.get("content-length", 0))
+    downloaded = 0
+    chunks = []
+    for chunk in r.iter_content(chunk_size=8192):
+        if chunk:
+            chunks.append(chunk)
+            downloaded += len(chunk)
+            if progress_cb and total:
+                progress_cb(int(downloaded / total * 100))
+    dest_path.write_bytes(b"".join(chunks))
+    return True
+
+
+# ── Update Dialog ─────────────────────────────────────────────────────────────
+class UpdateDialog(Toplevel):
+    """
+    Shown when a newer version is available on GitHub.
+    Handles both .py (in-place replace + restart) and .exe (opens releases page).
+    """
+    def __init__(self, parent, remote_version: str):
+        super().__init__(parent)
+        self.title("Update Available")
+        self.configure(bg=BG_DARK)
+        self.resizable(False, False)
+        self.grab_set()
+        self._remote = remote_version
+        self._build()
+        self.update_idletasks()
+        # Centre over parent
+        w, h = 480, 260
+        px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{max(0,px)}+{max(0,py)}")
+
+    def _build(self):
+        # Header
+        hdr = Frame(self, bg=BG_PANEL, height=52)
+        hdr.pack(fill=X); hdr.pack_propagate(False)
+        Frame(hdr, bg=SUCCESS, width=4).pack(side=LEFT, fill=Y)
+        Label(hdr, text="⬆  Update Available",
+              font=("Segoe UI", 13, "bold"), fg=SUCCESS, bg=BG_PANEL
+              ).pack(side=LEFT, padx=14)
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+
+        body = Frame(self, bg=BG_DARK)
+        body.pack(fill=BOTH, expand=True, padx=24, pady=18)
+
+        Label(body,
+              text=f"PlexBot v{self._remote} is available  (you have v{VERSION})",
+              font=("Segoe UI", 10), fg=TEXT, bg=BG_DARK).pack(anchor=W)
+
+        Label(body,
+              text=f"Source:  github.com/{GITHUB_USER}/{GITHUB_REPO}",
+              font=FONT_MONO_SM, fg=TEXT_DIM, bg=BG_DARK).pack(anchor=W, pady=(6, 0))
+
+        # Determine mode
+        self._is_frozen = getattr(sys, "frozen", False)
+        if self._is_frozen:
+            note = ("Running as PlexBot.exe — the EXE cannot update itself.\n"
+                    "Click below to open the Releases page and download the new EXE.")
+        else:
+            note = ("PlexBot will download the new plexbot.py, replace this file,\n"
+                    "and ask you to restart the app.")
+
+        Label(body, text=note, font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DARK,
+              justify=LEFT).pack(anchor=W, pady=(10, 0))
+
+        # Progress bar (only relevant for .py update)
+        self._prog_frame = Frame(body, bg=BG_DARK)
+        self._prog_frame.pack(fill=X, pady=(12, 0))
+        style = ttk.Style()
+        style.configure("Upd.Horizontal.TProgressbar",
+                        troughcolor=BG_SURFACE, background=SUCCESS,
+                        borderwidth=0, lightcolor=SUCCESS, darkcolor=SUCCESS)
+        self._prog = ttk.Progressbar(self._prog_frame,
+                                     style="Upd.Horizontal.TProgressbar",
+                                     mode="determinate", length=420)
+        self._prog_lbl = Label(self._prog_frame, text="", font=FONT_SMALL,
+                               fg=TEXT_DIM, bg=BG_DARK)
+
+        # Buttons
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+        btn_row = Frame(self, bg=BG_PANEL); btn_row.pack(fill=X, pady=10)
+
+        if self._is_frozen:
+            self._update_btn = Label(btn_row, text="🌐  Open Releases Page",
+                                     font=FONT_BOLD, fg="#000", bg=SUCCESS,
+                                     cursor="hand2", padx=20, pady=8)
+            self._update_btn.pack(side=LEFT, padx=16)
+            self._update_btn.bind("<Button-1>", lambda e: self._open_releases())
+        else:
+            self._update_btn = Label(btn_row, text="⬆  Download & Install",
+                                     font=FONT_BOLD, fg="#000", bg=SUCCESS,
+                                     cursor="hand2", padx=20, pady=8)
+            self._update_btn.pack(side=LEFT, padx=16)
+            self._update_btn.bind("<Button-1>", lambda e: self._do_update())
+
+        skip = Label(btn_row, text="Skip this update", font=FONT_SMALL,
+                     fg=MUTED, bg=BG_PANEL, cursor="hand2", padx=16, pady=8)
+        skip.pack(side=LEFT)
+        skip.bind("<Button-1>", lambda e: self.destroy())
+
+    def _open_releases(self):
+        import webbrowser
+        webbrowser.open(GITHUB_RELEASES_PAGE)
+        self.destroy()
+
+    def _do_update(self):
+        """Download new plexbot.py and replace current file."""
+        self._update_btn.configure(text="Downloading…", cursor="arrow",
+                                   bg=BG_SURFACE, fg=MUTED)
+        self._update_btn.unbind("<Button-1>")
+        self._prog.pack(fill=X)
+        self._prog_lbl.pack(fill=X)
+
+        script_path = Path(__file__).resolve()
+        tmp_path    = script_path.with_suffix(".py.update_tmp")
+
+        def _run():
+            try:
+                def progress(pct):
+                    self.after(0, lambda: self._prog.configure(value=pct))
+                    self.after(0, lambda: self._prog_lbl.configure(
+                        text=f"Downloading…  {pct}%"))
+                download_update(tmp_path, progress_cb=progress)
+                # Quick sanity check — make sure it looks like Python
+                content = tmp_path.read_text(encoding="utf-8", errors="replace")
+                if "VERSION" not in content or "PlexBot" not in content:
+                    raise ValueError("Downloaded file doesn't look like plexbot.py")
+                # Replace the running script
+                script_path.write_bytes(tmp_path.read_bytes())
+                tmp_path.unlink(missing_ok=True)
+                self.after(0, self._update_done)
+            except Exception as ex:
+                try: tmp_path.unlink(missing_ok=True)
+                except Exception: pass
+                self.after(0, lambda: self._update_error(str(ex)))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _update_done(self):
+        self._prog.configure(value=100)
+        self._prog_lbl.configure(text="Download complete!")
+        if messagebox.askyesno(
+                "Restart Required",
+                f"PlexBot v{self._remote} has been downloaded.\n\n"
+                "Restart the app now to use the new version?",
+                parent=self):
+            python = sys.executable
+            os.execv(python, [python] + sys.argv)
+        self.destroy()
+
+    def _update_error(self, msg: str):
+        self._prog_lbl.configure(text=f"Error: {msg}", fg=ERROR)
+        self._update_btn.configure(text="⬆  Retry", cursor="hand2",
+                                   bg=SUCCESS, fg="#000")
+        self._update_btn.bind("<Button-1>", lambda e: self._do_update())
+
+
 # ── Main Window ───────────────────────────────────────────────────────────────
 class PlexBot(Tk):
     def __init__(self):
@@ -3875,9 +4113,11 @@ class PlexBot(Tk):
         self.geometry("1100x760")
         self.minsize(900, 640)
         self.configure(bg=BG_DARK)
-        self.last_source_folder = ""   # updated whenever files are loaded
+        self.last_source_folder = ""
         self._build()
         self._set_window_icon()
+        # Check for updates in the background — never blocks startup
+        self.after(3000, self._start_update_check)
 
     def _set_window_icon(self):
         """Set the taskbar / titlebar icon from plexbot.ico (same folder as script)."""
@@ -4022,6 +4262,19 @@ class PlexBot(Tk):
         clean_btn.bind("<Enter>",    lambda e: clean_btn.configure(fg=ERROR))
         clean_btn.bind("<Leave>",    lambda e: clean_btn.configure(fg=MUTED))
 
+        # Update banner — hidden until an update is found
+        self._update_banner = Frame(self, bg="#1a2e1a", height=28)
+        self._update_banner_lbl = Label(self._update_banner, text="",
+                                        font=("Segoe UI", 9), fg=SUCCESS,
+                                        bg="#1a2e1a", cursor="hand2")
+        self._update_banner_lbl.pack(side=LEFT, padx=12, fill=Y)
+        self._update_banner_x = Label(self._update_banner, text="✕",
+                                      font=("Segoe UI", 9), fg=MUTED,
+                                      bg="#1a2e1a", cursor="hand2", padx=10)
+        self._update_banner_x.pack(side=RIGHT)
+        self._update_banner_x.bind("<Button-1>",
+                                   lambda e: self._update_banner.pack_forget())
+
         # Tabs
         style = ttk.Style()
         style.theme_use("clam")
@@ -4055,6 +4308,26 @@ class PlexBot(Tk):
 
     def set_status(self, msg: str):
         self._sv.set(f"  {msg}")
+
+    def _start_update_check(self):
+        """Fire a background thread to check GitHub for a newer version."""
+        def _check():
+            try:
+                remote_ver, _ = fetch_latest_version()
+                if _parse_version(remote_ver) > _parse_version(VERSION):
+                    self.after(0, lambda: self._show_update_banner(remote_ver))
+            except Exception:
+                pass  # No network / rate-limited — fail silently
+        threading.Thread(target=_check, daemon=True).start()
+
+    def _show_update_banner(self, remote_version: str):
+        """Show a slim green banner below the header offering the update."""
+        self._update_banner_lbl.configure(
+            text=f"⬆  PlexBot v{remote_version} is available — click to update")
+        self._update_banner_lbl.bind(
+            "<Button-1>", lambda e: UpdateDialog(self, remote_version))
+        # Insert banner between header and the notebook
+        self._update_banner.pack(fill=X, before=self.winfo_children()[1])
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────

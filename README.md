@@ -1,4 +1,4 @@
-# 🎬 PlexBot v1.07
+# 🎬 PlexBot v1.08
 **Automatic Media File Renamer for Plex**  
 *Powered by DAT — Dans Automation Tools*
 
@@ -21,7 +21,8 @@ PlexBot is a desktop application that takes your messy downloaded video filename
 | 🎬 Movie renaming | Looks up titles and years via **OMDb**, **TheTVDB**, or **TMDb** |
 | 🔤 Subtitle renaming | Renames and moves `.srt`, `.ass`, `.vtt` and more, preserving language tags |
 | 🏷️ Media tags | Optionally appends resolution, video codec, and audio channels to filenames |
-| 🎨 Source brand icons | Brand icons shown on source selector pills and the Lookup button |
+| 🎨 Source brand icons | Brand icons on source pills and the Lookup button — updates live |
+| ⬆️ Auto-update | Checks GitHub on startup; downloads and installs updates in one click |
 | 📁 Drag and drop | Drop files or whole folders directly onto the app |
 | 🔁 Recursive scan | Scans all subfolders automatically |
 | ⚡ Parallel lookups | Configurable 5–30 concurrent threads for lookups and renames |
@@ -77,33 +78,38 @@ Movies\
 
 ## Lookup Sources
 
-Both tabs show brand icons on the **LOOKUP VIA** source selector pills and on the **Lookup button** itself — the button icon updates to match the active source.
+Both tabs show brand icons on the **LOOKUP VIA** source selector pills and on the **Lookup button** itself — the icon updates live when you switch sources.
 
 | Tab | Sources |
 |---|---|
 | 📺 TV Shows | TVmaze *(default)* · TheTVDB |
 | 🎬 Movies | OMDb *(default)* · TheTVDB · TMDb |
 
-| Source | Icon | Setup |
-|---|---|---|
-| TVmaze | 🟠 orange TV | No key needed — works immediately |
-| TheTVDB | 🟢 green shield | Built-in key — no setup |
-| OMDb | ⭐ gold star | Free key required (1,000/day) |
-| TMDb | 🔵 blue/teal bar | Built-in token — no setup. Excellent coverage. |
+| Source | Setup |
+|---|---|
+| TVmaze | No key needed — works immediately |
+| TheTVDB | Built-in key — no setup |
+| OMDb | Free key required — [omdbapi.com/apikey.aspx](http://www.omdbapi.com/apikey.aspx) |
+| TMDb | Built-in token — no setup. Excellent coverage. |
 
 ---
 
-## API Keys
+## Auto-Update
 
-Only OMDb requires a user-supplied key. All other sources are built-in.
+PlexBot checks GitHub for a newer version automatically on every startup.
 
-**Getting an OMDb key:**
-1. Go to [omdbapi.com/apikey.aspx](http://www.omdbapi.com/apikey.aspx)
-2. Select the **Free** tier, enter your email
-3. Key arrives almost immediately
-4. Open PlexBot → Movies tab → paste into **OMDB API KEY**
+- The check runs in a **background thread** — no delay to launch
+- If a newer version is found, a **green banner** appears below the header
+- Click the banner to open the Update dialog
+- Click **✕** on the banner to dismiss it
 
-The key is saved automatically — enter it once, never again.
+**Running from source (.py):** PlexBot downloads the new `plexbot.py`, verifies it, replaces the current file, and offers to restart automatically via one click.
+
+**Running as PlexBot.exe:** The EXE cannot self-replace. Clicking the banner opens the GitHub Releases page so you can download the new EXE.
+
+Updates are hosted at: **[github.com/dmurr5050/Plexbot](https://github.com/dmurr5050/Plexbot)**
+
+To push an update: bump `VERSION` in `plexbot.py`, commit and push to `main`. That's it.
 
 ---
 
@@ -112,7 +118,7 @@ The key is saved automatically — enter it once, never again.
 Click **▶ SETTINGS** in the right-hand panel to expand.
 
 - **File Mode** — Move *(default)* or Copy & Keep Original
-- **Folder Structure** — Year in TV folder/filename; per-movie subfolder for movies (both on by default)
+- **Folder Structure** — Year in TV folder/filename; per-movie subfolder (both on by default)
 - **Include in Filename** — Resolution, Video Codec, Audio Channels (each toggleable)
 - **Strip year from search query** — removes years from search terms (on by default)
 - **Concurrent lookups** — 5/10/15/20/25/30 threads (default 5), used for both lookups and renames
@@ -134,26 +140,29 @@ Click **▶ SETTINGS** in the right-hand panel to expand.
 
 ## Key Features
 
+### Auto-Update
+Checks GitHub 3 seconds after launch. Green banner appears if an update is available. One-click download and install for source users; opens Releases page for EXE users.
+
 ### Source Brand Icons
-Each lookup source has a brand icon: TVmaze (orange), TheTVDB (green), OMDb (gold star), TMDb (blue/teal). Icons appear on the source selector pills in the toolbar and update live on the Lookup button as you switch sources.
+TVmaze (orange), TheTVDB (green), OMDb (gold star), TMDb (blue/teal). Icons appear on source pills and update live on the Lookup button.
 
 ### Smart Lookup Picker
-Search dialog always **centres over the app window**. Pre-filled with the detected title. Pick from results, continue the batch.
+Always **centres over the app window**. Pre-filled with detected title. Pick from results, continue the batch.
 
 ### Right-Click Menu
-Right-click any file row: 🔍 Manual Search · 🔄 Re-run Auto Lookup · ✕ Remove
+Right-click any file: 🔍 Manual Search · 🔄 Re-run Auto Lookup · ✕ Remove
 
 ### Retry Errors
-After lookup, the button shows **🔄 Retry Errors (N)**. Only failed files are retried.
+After lookup the button shows **🔄 Retry Errors (N)**. Only failed files retried.
 
 ### Folder Cleanup (🧹)
-Removes `.txt .idx .nfo .jpg .htm .png .url .bif`, empty folders, and System Volume Information. Defaults to last source folder.
+Removes `.txt .idx .nfo .jpg .htm .png .url .bif`, empty folders, System Volume Information. Defaults to last source folder.
 
 ### Rename History (📋)
-Virtual canvas rendering — opens instantly with thousands of entries. Filter All/TV/Movie, search, clear.
+Virtual canvas — instant open with thousands of entries. Filter All/TV/Movie, search, clear.
 
 ### In-App Help (❓)
-Full documentation embedded — always available, no internet needed.
+Full documentation embedded — always available offline.
 
 ---
 
@@ -167,7 +176,7 @@ Full documentation embedded — always available, no internet needed.
 ## Getting Started
 
 ### Option A — Run the EXE
-Download `PlexBot.exe` and `plexbot.ico` from Releases — keep both in the same folder. Double-click to run.
+Download `PlexBot.exe` and `plexbot.ico` from [Releases](https://github.com/dmurr5050/Plexbot/releases) — keep both in the same folder. Double-click to run.
 
 ### Option B — Run from Python source
 ```bash
@@ -201,20 +210,27 @@ Auto-saved to `Documents\PlexBot\plexbot_config.json` — OMDb key, destinations
 
 ## Changelog
 
+### v1.08
+- **Auto-update system** — PlexBot checks GitHub for a newer version on every startup
+- Green update banner appears below the header when an update is available
+- One-click download and install for source (.py) users — automatically restarts
+- EXE users are directed to the GitHub Releases page
+- Update check runs in background thread — zero impact on startup time
+- Hosted at github.com/dmurr5050/Plexbot — push a new version to `main` to distribute
+
 ### v1.07
-- **Source brand icons** — TVmaze, TheTVDB, OMDb, and TMDb each have a brand-coloured icon displayed on their selector pills
-- **Lookup button icon** — the Lookup button now shows the icon of the currently selected source; updates live when you switch sources
-- Icons are embedded as PNG data — no external files needed, works in the compiled EXE
+- Source brand icons — TVmaze, TheTVDB, OMDb, TMDb each have a branded icon on their selector pills
+- Lookup button shows the icon of the currently active source; updates live when switching
+- Fixed infinite recursion crash on startup caused by proxy bind loop in lookup button
 
 ### v1.06
-- TMDb (The Movie Database) added as a movie lookup source — built-in token, no setup required
-- Movie lookup parallelisation — all unique titles searched in parallel (same pattern as TV shows)
+- TMDb added as a movie lookup source — built-in token, no setup required
+- Movie lookup parallelisation — all unique titles searched in parallel
 - Movie session cache — duplicate titles only searched once per session
-- Skip redundant detail fetch — halves API calls when match is confident
+- Skip redundant detail fetch when match is confident — halves API calls
 - History dialog virtual canvas rendering — instant open with 4,000+ entries
 - Search picker always centres over the app window
-- Lookup UI debounced at 100ms — responsive at 100+ concurrent threads
-- Rename UI debounced at 150ms — responsive at 200+ parallel renames
+- Lookup UI debounced at 100ms; Rename UI debounced at 150ms
 - Apply & Rename button stays disabled until full lookup batch completes
 
 ### v1.05
@@ -232,22 +248,18 @@ Auto-saved to `Documents\PlexBot\plexbot_config.json` — OMDb key, destinations
 
 ### v1.02
 - TheTVDB support for TV Shows and Movies
-- Lookup Via source selector with pill buttons in both toolbars
+- Lookup Via source selector with pill buttons
 
 ### v1.01
-- Strip year from search query option
-- Right-click context menu (Manual Search, Re-run, Remove)
-- Parallel lookups — 5–30 configurable threads
+- Strip year from search query; right-click menu; parallel lookups (5–30 threads)
 - TV year-in-folder structure; movie per-title subfolders
-- Retry Errors — lookup button shows count, retries only failures
-- Folder Cleanup tool (🧹), In-app Help (❓)
+- Retry Errors; Folder Cleanup (🧹); In-app Help (❓)
 - Rename on background thread; live flicker-free UI updates
 
 ### v1.0 — Initial Release
 - TV renaming via TVmaze, Movie renaming via OMDb
-- Subtitle auto-detection and renaming
-- Media tags, drag and drop, recursive scanning
-- Smart picker, rename history, PyInstaller EXE build
+- Subtitle auto-detection and renaming, media tags
+- Drag and drop, recursive scanning, smart picker, rename history
 
 ---
 
