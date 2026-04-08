@@ -33,12 +33,38 @@ OMDB_BASE     = "http://www.omdbapi.com"
 OMDB_API_KEY  = ""          # Paste your free OMDb key here, or enter it in the Movies tab
 TVDB_BASE     = "https://api4.thetvdb.com/v4"
 _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
+TMDB_BASE     = "https://api.themoviedb.org/3"
+_TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.06"
+VERSION       = "1.07"
 
 # ── Data-source options shown in the UI dropdowns ──────────────────────────
 TV_SOURCES    = ["TVmaze", "TheTVDB"]
-MOVIE_SOURCES = ["OMDb", "TheTVDB"]
+MOVIE_SOURCES = ["OMDb", "TheTVDB", "TMDb"]
+
+# ── Brand icons for lookup sources (16x16 PNG, base64-encoded) ───────────────
+SOURCE_ICONS_B64 = {
+    "TVmaze":  "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAZUlEQVR42s2VUQ8AEAiE7z/7/8srobpic5un8nUjAZSkQZgFSyzMhGZhW2gVNkGXACsNXWCsM7UHIZhXaIjHgcGCHPCUUwLu8v5xSJ2hBSU64HFjZy6EAgZd+e/5h4nzfsDe+gI6g1LU7C2I5mkAAAAASUVORK5CYII=",
+    "TheTVDB": "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAcUlEQVR42mNgQAMZ2wz/k4IZ8AFSDcNrKEySVIDVUGTbyDUQbii689EVIVtClPfxGYhsELo41Q3EZShZBuJz6eBwIc3CkGQvUy3ZkJuwsRpIiqFEuZBYQ4n2MjGGEix5SDGU6GKMGEPJLhMHtNRG1w8A87Hv6rm7Oj0AAAAASUVORK5CYII=",
+    "OMDb":    "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAZElEQVR42mNgQANSUlL/ScEM+ACphuE1lFzDsBpKqWEohhKj8OtRCTAmylC6GwgzjFhDGYg1iFiDGUg1iJDBDOS4Dp8rae9lYgwlO5apaiDVvYxLI0VhSNP8TPcSh/YFLLWqAADLRT5/x64M+AAAAABJRU5ErkJggg==",
+    "TMDb":    "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAAgElEQVR42mNgQAO8qvb/ScEM+ACphuE1FCSBDmBiyJrR+VgNxacB3XBcBsINRRfE5SJcLsYwlFgDCXl5CBvIuOUJSRivgaQahs1QBkoNQzeUdi6kSRjiwoRilmCyIZSfyTIQPbsRysc48zMuA4nxPtYSh1wDSS4T8XmZqqU2un4AXpXbO2nQIxoAAAAASUVORK5CYII=",
+}
+_source_icon_cache: dict = {}   # name -> PhotoImage (kept alive here)
+
+def get_source_icon(name: str):
+    """Return a Tkinter PhotoImage for the given source name, or None."""
+    if name in _source_icon_cache:
+        return _source_icon_cache[name]
+    b64 = SOURCE_ICONS_B64.get(name)
+    if not b64:
+        return None
+    try:
+        from tkinter import PhotoImage as _PI
+        img = _PI(data=b64)
+        _source_icon_cache[name] = img
+        return img
+    except Exception:
+        return None
 
 # ── Embedded header icon (40x40 PNG, base64) ─────────────────────────────────
 HEADER_ICON_B64 = """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"""
@@ -178,6 +204,47 @@ def omdb_get_movie(imdb_id: str, api_key: str) -> dict:
         "title":    data.get("Title", ""),
         "year":     data.get("Year", "????")[:4],
         "overview": data.get("Plot", "")[:120],
+    }
+
+# ── TMDb API ──────────────────────────────────────────────────────────────────
+def _tmdb_headers() -> dict:
+    return {"Authorization": f"Bearer {_TMDB_TOKEN}",
+            "Accept": "application/json"}
+
+def tmdb_search_movies(title: str, year=None) -> list:
+    """Search TMDb, return up to 10 matches [{id, title, year, overview}]."""
+    params = {"query": title, "include_adult": "false", "language": "en-US", "page": 1}
+    if year:
+        params["primary_release_year"] = year
+    r = requests.get(f"{TMDB_BASE}/search/movie",
+                     params=params, headers=_tmdb_headers(), timeout=10)
+    r.raise_for_status()
+    results = []
+    for item in (r.json().get("results") or [])[:10]:
+        yr = (item.get("release_date") or "????")[:4]
+        results.append({
+            "id":       item.get("id"),
+            "title":    item.get("title", ""),
+            "year":     yr,
+            "overview": (item.get("overview") or "")[:120],
+        })
+    return results
+
+def tmdb_get_movie(movie_id) -> dict:
+    """Fetch full movie details from TMDb by ID."""
+    r = requests.get(f"{TMDB_BASE}/movie/{movie_id}",
+                     params={"language": "en-US"},
+                     headers=_tmdb_headers(), timeout=10)
+    if r.status_code == 404:
+        raise ValueError("Movie not found on TMDb")
+    r.raise_for_status()
+    data = r.json()
+    yr = (data.get("release_date") or "????")[:4]
+    return {
+        "id":       data.get("id"),
+        "title":    data.get("title", ""),
+        "year":     yr,
+        "overview": (data.get("overview") or "")[:120],
     }
 
 # ── TheTVDB API ──────────────────────────────────────────────────────────────
@@ -1146,8 +1213,7 @@ class BaseTab(Frame):
         self._action_divider.pack(fill=X, padx=16, pady=(6, 0))
 
         # ── Action buttons ────────────────────────────────────────────────
-        self.lookup_btn = self._big_btn(p, self._lookup_label(), self._start_lookup,
-                                        self.color, "#000")
+        self.lookup_btn = self._make_lookup_btn(p)
         self.lookup_btn.pack(fill=X, padx=16, pady=(10, 6))
 
         self.prog_frame = Frame(p, bg=BG_PANEL)
@@ -1194,6 +1260,64 @@ class BaseTab(Frame):
                 bg=self.color if sel else BG_DARK,
                 fg="#000"    if sel else TEXT_DIM,
             )
+
+    def _make_source_pill(self, parent, src: str, is_sel: bool, accent,
+                          on_click, on_enter_bg, on_leave_bg):
+        """
+        Create a pill button Frame with a brand icon + source name label.
+        Returns (pill_frame, [all_child_widgets]) so callers can update bg/fg.
+        """
+        bg  = accent if is_sel else BG_SURFACE
+        fg  = "#000" if is_sel else TEXT_DIM
+
+        pill = Frame(parent, bg=bg, cursor="hand2", padx=0, pady=0)
+        pill.pack(side=LEFT, padx=2)
+
+        # Icon
+        icon_img = get_source_icon(src)
+        children = []
+        if icon_img:
+            ico_lbl = Label(pill, image=icon_img, bg=bg,
+                            cursor="hand2", padx=3, pady=3)
+            ico_lbl.pack(side=LEFT)
+            ico_lbl._img_ref = icon_img   # prevent GC
+            children.append(ico_lbl)
+
+        # Text
+        txt_lbl = Label(pill, text=src, font=("Segoe UI", 9, "bold"),
+                        fg=fg, bg=bg, cursor="hand2", padx=(4 if icon_img else 10), pady=4)
+        txt_lbl.pack(side=LEFT, padx=(0, 6))
+        children.append(txt_lbl)
+
+        all_widgets = [pill] + children
+
+        def _enter(e, s=src):
+            sel_now = (s == self._source_var.get())
+            c = accent if sel_now else on_enter_bg
+            f = "#000" if sel_now else WHITE
+            for w in all_widgets:
+                try: w.configure(bg=c)
+                except Exception: pass
+            txt_lbl.configure(fg=f)
+
+        def _leave(e, s=src):
+            sel_now = (s == self._source_var.get())
+            c = accent if sel_now else on_leave_bg
+            f = "#000" if sel_now else TEXT_DIM
+            for w in all_widgets:
+                try: w.configure(bg=c)
+                except Exception: pass
+            txt_lbl.configure(fg=f)
+
+        def _click(e):
+            on_click(src)
+
+        for w in all_widgets:
+            w.bind("<Button-1>", _click)
+            w.bind("<Enter>",    _enter)
+            w.bind("<Leave>",    _leave)
+
+        return pill, all_widgets, txt_lbl
 
     def _build_folder_options(self, parent): pass  # override in subclasses
 
@@ -1257,6 +1381,109 @@ class BaseTab(Frame):
             b.configure(fg=MUTED, bg=BG_SURFACE)
         b._base_bg = bg; b._base_fg = fg
         return b
+
+    def _make_lookup_btn(self, parent):
+        """
+        Build the Lookup button as a Frame containing an icon Label + text Label.
+        The frame proxies .configure(text=...), .bind(), and .unbind() so that
+        the existing _enable_btn/_disable_btn helpers work without changes.
+        """
+        bg = self.color
+        fg = "#000"
+
+        frame = Frame(parent, bg=bg, cursor="hand2")
+        frame._base_bg = bg
+        frame._base_fg = fg
+
+        # Icon slot — populated by _update_lookup_icon
+        self._lookup_icon_lbl = Label(frame, image="", bg=bg,
+                                      cursor="hand2", padx=4, pady=12)
+        self._lookup_icon_lbl.pack(side=LEFT, padx=(8, 0))
+
+        # Text label
+        self._lookup_text_lbl = Label(frame, text=self._lookup_label(),
+                                      font=FONT_BOLD, fg=fg, bg=bg,
+                                      cursor="hand2", padx=4, pady=12)
+        self._lookup_text_lbl.pack(side=LEFT, fill=X, expand=True)
+
+        # ── Proxy interface so _enable_btn / _disable_btn still work ──────
+        # Save real Tkinter bind/unbind/configure BEFORE we override them
+        _real_bind      = Frame.bind
+        _real_unbind    = Frame.unbind
+        _real_configure = Frame.configure
+
+        def _frame_configure(**kw):
+            if "text" in kw:
+                self._lookup_text_lbl.configure(text=kw.pop("text"))
+            if "fg" in kw:
+                col = kw["fg"]
+                self._lookup_text_lbl.configure(fg=col)
+                self._lookup_icon_lbl.configure(fg=col)
+            if "bg" in kw:
+                col = kw["bg"]
+                _real_configure(frame, bg=col)
+                self._lookup_text_lbl.configure(bg=col)
+                self._lookup_icon_lbl.configure(bg=col)
+            if "cursor" in kw:
+                cur = kw["cursor"]
+                _real_configure(frame, cursor=cur)
+                self._lookup_text_lbl.configure(cursor=cur)
+                self._lookup_icon_lbl.configure(cursor=cur)
+
+        def _frame_bind(event, handler):
+            _real_bind(frame, event, handler)
+            self._lookup_icon_lbl.bind(event, handler)
+            self._lookup_text_lbl.bind(event, handler)
+
+        def _frame_unbind(event):
+            _real_unbind(frame, event)
+            self._lookup_icon_lbl.unbind(event)
+            self._lookup_text_lbl.unbind(event)
+
+        frame.configure = lambda **kw: _frame_configure(**kw)
+        frame.bind      = lambda event, handler=None, **kw: (
+            _frame_bind(event, handler) if handler else _real_bind(frame, event, **kw))
+        frame.unbind    = lambda event, *a: _frame_unbind(event)
+
+        # Hover effect — use real bind directly (proxy not yet needed here,
+        # but using _frame_bind ensures icon + text labels also respond)
+        def _on_enter(e):
+            c = self._lighten(frame._base_bg)
+            _real_configure(frame, bg=c)
+            self._lookup_text_lbl.configure(bg=c)
+            self._lookup_icon_lbl.configure(bg=c)
+
+        def _on_leave(e):
+            _real_configure(frame, bg=frame._base_bg)
+            self._lookup_text_lbl.configure(bg=frame._base_bg)
+            self._lookup_icon_lbl.configure(bg=frame._base_bg)
+
+        for w in [frame, self._lookup_icon_lbl, self._lookup_text_lbl]:
+            _real_bind(w, "<Enter>",    _on_enter)
+            _real_bind(w, "<Leave>",    _on_leave)
+            _real_bind(w, "<Button-1>", lambda e: self._start_lookup())
+
+        # Load icon for the default source
+        self._update_lookup_icon()
+        return frame
+
+    def _update_lookup_icon(self):
+        """Refresh the icon on the lookup button to match the current source."""
+        src = getattr(self, "_source_var", None)
+        src_name = src.get() if src else None
+        img = get_source_icon(src_name) if src_name else None
+        if not hasattr(self, "_lookup_icon_lbl"):
+            return
+        try:
+            if img:
+                self._lookup_icon_lbl.configure(image=img)
+                self._lookup_icon_lbl._img_ref = img
+                self._lookup_icon_lbl.pack(side=LEFT, padx=(8, 0))
+            else:
+                self._lookup_icon_lbl.configure(image="")
+                self._lookup_icon_lbl.pack_forget()
+        except Exception:
+            pass
 
     def _maybe_enable_apply(self):
         """Enable the Apply button only when no lookup is running and some entries are ready."""
@@ -2017,37 +2244,33 @@ class TVTab(BaseTab):
         Label(src_frame, text="LOOKUP VIA", font=("Segoe UI", 8, "bold"),
               fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=(0, 8))
 
-        self._source_btns = {}
+        self._source_btns  = {}   # src -> pill_frame
+        self._source_wgts  = {}   # src -> all_widgets list
+        self._source_txts  = {}   # src -> text label
         for src in TV_SOURCES:
             is_sel = (src == self._source_var.get())
-            btn = Label(
-                src_frame, text=src,
-                font=("Segoe UI", 9, "bold"),
-                fg="#000" if is_sel else TEXT_DIM,
-                bg=ACCENT if is_sel else BG_SURFACE,
-                cursor="hand2", padx=12, pady=4,
-                relief="flat", bd=0,
-            )
-            btn.pack(side=LEFT, padx=2)
-            btn.bind("<Button-1>", lambda e, s=src: self._set_source(s))
-            btn.bind("<Enter>",    lambda e, b=btn, s=src: b.configure(
-                bg=ACCENT if s == self._source_var.get() else BG_HOVER,
-                fg="#000" if s == self._source_var.get() else WHITE))
-            btn.bind("<Leave>",    lambda e, b=btn, s=src: b.configure(
-                bg=ACCENT if s == self._source_var.get() else BG_SURFACE,
-                fg="#000" if s == self._source_var.get() else TEXT_DIM))
-            self._source_btns[src] = btn
+            pill, wgts, txt = self._make_source_pill(
+                src_frame, src, is_sel, ACCENT,
+                on_click=self._set_source,
+                on_enter_bg=BG_HOVER, on_leave_bg=BG_SURFACE)
+            self._source_btns[src] = pill
+            self._source_wgts[src] = wgts
+            self._source_txts[src] = txt
 
     def _set_source(self, src: str):
-        """Switch the active lookup source and update button styles."""
+        """Switch the active lookup source and update pill styles."""
         self._source_var.set(src)
         save_config({"tv_source": src})
-        for name, btn in self._source_btns.items():
+        for name in TV_SOURCES:
             sel = (name == src)
-            btn.configure(
-                bg=ACCENT if sel else BG_SURFACE,
-                fg="#000" if sel else TEXT_DIM,
-            )
+            bg  = ACCENT if sel else BG_SURFACE
+            fg  = "#000" if sel else TEXT_DIM
+            for w in self._source_wgts.get(name, []):
+                try: w.configure(bg=bg)
+                except Exception: pass
+            if name in self._source_txts:
+                self._source_txts[name].configure(fg=fg)
+        self._update_lookup_icon()
 
     def _lookup_label(self): return "🔍  Lookup Episodes"
     def _parse(self, f):     return parse_tv_filename(f)
@@ -2299,37 +2522,33 @@ class MoviesTab(BaseTab):
         Label(src_frame, text="LOOKUP VIA", font=("Segoe UI", 8, "bold"),
               fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=(0, 8))
 
-        self._source_btns = {}
+        self._source_btns  = {}
+        self._source_wgts  = {}
+        self._source_txts  = {}
         for src in MOVIE_SOURCES:
             is_sel = (src == self._source_var.get())
-            btn = Label(
-                src_frame, text=src,
-                font=("Segoe UI", 9, "bold"),
-                fg="#000" if is_sel else TEXT_DIM,
-                bg=ACCENT_BLUE if is_sel else BG_SURFACE,
-                cursor="hand2", padx=12, pady=4,
-                relief="flat", bd=0,
-            )
-            btn.pack(side=LEFT, padx=2)
-            btn.bind("<Button-1>", lambda e, s=src: self._set_source(s))
-            btn.bind("<Enter>",    lambda e, b=btn, s=src: b.configure(
-                bg=ACCENT_BLUE if s == self._source_var.get() else BG_HOVER,
-                fg="#000" if s == self._source_var.get() else WHITE))
-            btn.bind("<Leave>",    lambda e, b=btn, s=src: b.configure(
-                bg=ACCENT_BLUE if s == self._source_var.get() else BG_SURFACE,
-                fg="#000" if s == self._source_var.get() else TEXT_DIM))
-            self._source_btns[src] = btn
+            pill, wgts, txt = self._make_source_pill(
+                src_frame, src, is_sel, ACCENT_BLUE,
+                on_click=self._set_source,
+                on_enter_bg=BG_HOVER, on_leave_bg=BG_SURFACE)
+            self._source_btns[src] = pill
+            self._source_wgts[src] = wgts
+            self._source_txts[src] = txt
 
     def _set_source(self, src: str):
-        """Switch the active lookup source and update button styles."""
+        """Switch the active lookup source and update pill styles."""
         self._source_var.set(src)
         save_config({"movie_source": src})
-        for name, btn in self._source_btns.items():
+        for name in MOVIE_SOURCES:
             sel = (name == src)
-            btn.configure(
-                bg=ACCENT_BLUE if sel else BG_SURFACE,
-                fg="#000" if sel else TEXT_DIM,
-            )
+            bg  = ACCENT_BLUE if sel else BG_SURFACE
+            fg  = "#000"      if sel else TEXT_DIM
+            for w in self._source_wgts.get(name, []):
+                try: w.configure(bg=bg)
+                except Exception: pass
+            if name in self._source_txts:
+                self._source_txts[name].configure(fg=fg)
+        self._update_lookup_icon()
         # Show/hide the OMDb key bar based on selection
         if hasattr(self, "_omdb_bar"):
             if src == "OMDb":
@@ -2470,6 +2689,18 @@ class MoviesTab(BaseTab):
                         raise LookupNotFoundError(f"Multiple matches for '{query}'", query)
                     full = top if (top.get("title") and top.get("year","????") != "????") \
                                else tvdb_get_movie(top["id"])
+                elif src == "TMDb":
+                    results = tmdb_search_movies(query, search_year)
+                    if not results:
+                        raise LookupNotFoundError(f"Movie not found: '{query}'", query)
+                    top = results[0]
+                    if search_year and top["year"] != str(search_year) and len(results) > 1:
+                        raise LookupNotFoundError(f"Multiple matches for '{query}'", query)
+                    q_norm    = query.lower().strip()
+                    t_norm    = top["title"].lower().strip()
+                    confident = (q_norm == t_norm or q_norm in t_norm or t_norm in q_norm)
+                    full = top if (confident and top.get("title") and top.get("year","????") != "????") \
+                               else tmdb_get_movie(top["id"])
                 else:
                     key = self.api_key_var.get().strip()
                     if not key:
@@ -2528,6 +2759,8 @@ class MoviesTab(BaseTab):
                 try:
                     if src == "TheTVDB":
                         full = tvdb_get_movie(chosen[0]["id"])
+                    elif src == "TMDb":
+                        full = tmdb_get_movie(chosen[0]["id"])
                     else:
                         api_key = self.api_key_var.get().strip()
                         full = omdb_get_movie(chosen[0]["id"], api_key) \
@@ -2583,12 +2816,26 @@ class MoviesTab(BaseTab):
             if search_year and top["year"] != str(search_year) and len(results) > 1:
                 raise LookupNotFoundError(
                     f"Multiple matches for '{query}'", query)
-            # TheTVDB search result has title+year — skip extra detail call
-            # when the result looks complete
             if top.get("title") and top.get("year","????") != "????":
                 full = top
             else:
                 full = tvdb_get_movie(top["id"])
+        elif src == "TMDb":
+            results = tmdb_search_movies(query, search_year)
+            if not results:
+                raise LookupNotFoundError(
+                    f"Movie not found: '{query}'", query)
+            top = results[0]
+            if search_year and top["year"] != str(search_year) and len(results) > 1:
+                raise LookupNotFoundError(
+                    f"Multiple matches for '{query}'", query)
+            q_norm    = query.lower().strip()
+            t_norm    = top["title"].lower().strip()
+            confident = (q_norm == t_norm or q_norm in t_norm or t_norm in q_norm)
+            if confident and top.get("title") and top.get("year","????") != "????":
+                full = top
+            else:
+                full = tmdb_get_movie(top["id"])
         else:
             key = self.api_key_var.get().strip()
             if not key:
@@ -2601,8 +2848,6 @@ class MoviesTab(BaseTab):
             if search_year and top["year"] != str(search_year) and len(results) > 1:
                 raise LookupNotFoundError(
                     f"Multiple matches for '{query}'", query)
-            # OMDb search already has title+year; only fetch detail when
-            # the title match is ambiguous
             q_norm    = query.lower().strip()
             t_norm    = top["title"].lower().strip()
             confident = (q_norm == t_norm or q_norm in t_norm or t_norm in q_norm)
@@ -2632,11 +2877,12 @@ class MoviesTab(BaseTab):
 
     def _show_picker(self, entry, query: str):
         src = self._source_var.get()
-        # Apply strip-year to picker's initial query too
         if self.opt_strip_year.get():
             query = strip_year_from_query(query)
         if src == "TheTVDB":
             search_fn = lambda q: tvdb_search_movies(q, None)
+        elif src == "TMDb":
+            search_fn = lambda q: tmdb_search_movies(q, None)
         else:
             key = self.api_key_var.get().strip()
             search_fn = lambda q, k=key: omdb_search_movies(q, None, k)
@@ -2649,6 +2895,8 @@ class MoviesTab(BaseTab):
         src = self._source_var.get()
         if src == "TheTVDB":
             full = tvdb_get_movie(choice["id"])
+        elif src == "TMDb":
+            full = tmdb_get_movie(choice["id"])
         else:
             key  = self.api_key_var.get().strip()
             full = omdb_get_movie(choice["id"], key) if choice.get("id") else choice
@@ -2903,7 +3151,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.06
+README_CONTENT = """# 🎬 PlexBot v1.07
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -2938,18 +3186,14 @@ It queries TVmaze or TheTVDB for the episode title and renames the file:
 
 Files are organised into a structured folder hierarchy:
 
-    TV Shows\\
-      └── Band of Brothers (2001)\\
-            └── Season 01\\
+    TV Shows\
+      └── Band of Brothers (2001)\
+            └── Season 01\
                   ├── Band of Brothers (2001) - S01E01 - Currahee.mkv
                   └── Band of Brothers (2001) - S01E01 - Currahee.en.srt
 
-Season folders always use the English word "Season" regardless of
-content language.
-
 Smart grouping: episodes of the same show share a single show-search
-call. 20 episodes of one show = 1 search + 20 parallel episode fetches,
-not 20 separate searches.
+call. 20 episodes of one show = 1 search + 20 parallel episode fetches.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2961,31 +3205,31 @@ PlexBot extracts the movie title and year from filenames like:
     Inception.2010.1080p.BluRay.x264.mkv
     The.Matrix.1999.REMASTERED.mkv
 
-It queries OMDb or TheTVDB, then creates a per-movie subfolder:
+It queries OMDb, TheTVDB, or TMDb, then creates a per-movie subfolder:
 
-    Movies\\
-      └── Inception (2010)\\
+    Movies\
+      └── Inception (2010)\
             ├── Inception (2010) - 1080p - H.264 - 5.1.mkv
             └── Inception (2010).en.srt
 
-Performance: all unique movie titles are looked up in parallel before
-renaming begins. Duplicate titles (multiple files, same movie) only hit
-the API once. When the top search result is a confident match, the
-redundant detail fetch is skipped — halving the API calls per movie.
+All unique titles are searched in parallel. Duplicate titles only hit
+the API once. Confident matches skip the redundant detail API call.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- LOOKUP VIA
+ LOOKUP VIA — SOURCES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Both tabs have a LOOKUP VIA selector in the toolbar.
+Both tabs have a LOOKUP VIA selector with brand icons in the toolbar.
+The selected source icon also appears on the Lookup button itself.
 
   TV Shows:  TVmaze (default)  ·  TheTVDB
-  Movies:    OMDb (default)    ·  TheTVDB
+  Movies:    OMDb (default)    ·  TheTVDB  ·  TMDb
 
-TVmaze — free, no key required, works immediately.
-TheTVDB — built-in key, no setup required.
-OMDb — requires a free API key (see API Keys section below).
+TVmaze   — Free, no key required, works immediately.
+TheTVDB  — Built-in key, no setup required.
+OMDb     — Free key required (1,000 lookups/day).
+TMDb     — Built-in token, no setup required. Excellent coverage.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2994,6 +3238,7 @@ OMDb — requires a free API key (see API Keys section below).
 
 TVmaze       — No key needed. Works straight away.
 TheTVDB      — Built-in key. No setup needed.
+TMDb         — Built-in token. No setup needed.
 OMDb Movies  — Free key required (1,000 lookups/day).
 
 To get an OMDb key:
@@ -3037,8 +3282,8 @@ SEARCH OPTIONS
   → On by default.
 
   Concurrent lookups
-  → Number of files looked up simultaneously: 5 / 10 / 15 / 20 / 25 / 30
-  → Default is 5. Higher values speed up large batches significantly.
+  → 5 / 10 / 15 / 20 / 25 / 30 threads. Default is 5.
+  → Higher values speed up large batches significantly.
   → The same thread count is used for both lookups and file renaming.
 
 
@@ -3046,38 +3291,34 @@ SEARCH OPTIONS
  PERFORMANCE — LARGE BATCHES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot is optimised for large batches:
-
   · TV: one show-search per unique show, not per episode. All show
-    searches run in parallel, then episode fetches run in parallel.
+    searches and episode fetches run in parallel.
 
   · Movies: all unique titles searched in parallel. Duplicate titles
-    (same movie, multiple files) only searched once per session.
-    Confident matches skip the detail fetch, halving API calls.
+    only searched once per session. Confident matches skip the
+    detail fetch, halving API calls.
 
-  · Lookup UI updates are debounced — rapid completions are coalesced
-    into one screen repaint every 100 ms, keeping the UI responsive.
+  · Lookup UI debounced at 100 ms — stays responsive during 100+
+    concurrent threads.
 
-  · Rename operations run in parallel with the same thread count.
-    Per-file UI updates are debounced at 150 ms intervals.
+  · Rename operations parallel with debounced UI at 150 ms.
 
-  · History dialog uses virtual rendering — opening 4,000+ history
-    entries is instant because only visible rows are ever drawn.
+  · History dialog virtual rendering — instant open with 4,000+ entries.
 
-  · Apply & Rename button stays disabled until the full batch completes.
+  · Apply & Rename button stays disabled until full batch completes.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SMART LOOKUP PICKER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-When PlexBot cannot confidently match a filename to a single result,
-it pauses and opens a search dialog centred over the app window:
+When PlexBot cannot confidently match a filename, a search dialog opens
+centred over the app window:
 
-  · A pre-filled search box with the detected title, ready to edit
-  · A scrollable list of matches showing title, year, and description
+  · Pre-filled search box, ready to edit
+  · Scrollable list of matches with title, year, description
   · Click any result to select it, then confirm
-  · The rest of the batch continues after you confirm or skip
+  · Batch continues after you confirm or skip
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3095,7 +3336,7 @@ Right-click any file row during or after a lookup:
  RETRY ERRORS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-After a lookup completes, any files that failed show an ERROR badge.
+After a lookup completes, failed files show an ERROR badge.
 The lookup button changes to 🔄 Retry Errors (N). Click it to retry
 only the errored files — successfully looked-up files stay untouched.
 
@@ -3110,20 +3351,18 @@ Files removed:  .txt  .idx  .nfo  .jpg  .htm  .png  .url  .bif
 Also removes:   Empty subfolders · System Volume Information
 
 How to use:
-  1. The folder defaults to the last folder you loaded files from
+  1. Folder defaults to last folder you loaded files from
   2. Click 🔍 Scan to preview everything that will be deleted
-  3. Review the list, then click 🗑 Delete All Listed Files
+  3. Click 🗑 Delete All Listed Files to remove
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  RENAME HISTORY  (📋 button in header)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Every rename is logged. Click 📋 History to open the history window.
-The window uses virtual rendering and opens instantly even with
-thousands of entries. You can:
+Every rename is logged. Opens instantly with 4,000+ entries.
 
-  · See original and new filename side by side
+  · Original and new filename side by side
   · Filter by All, TV, or Movie
   · Search by any part of the filename
   · Clear the full history when no longer needed
@@ -3141,12 +3380,11 @@ Subtitles: .srt .sub .ass .ssa .vtt .idx .sup .pgs
  CONFIGURATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Settings are saved automatically to:
+Settings saved automatically to:
   Documents\\PlexBot\\plexbot_config.json
 
-This file stores your OMDb API key, destination folders, all
-preferences, and the full rename history. Created automatically
-on first run.
+Stores: OMDb key, destinations, all settings, full rename history.
+Created automatically on first run.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3158,27 +3396,25 @@ Run from source:
   python plexbot.py
 
 Build EXE:
-  Put plexbot.py + plexbot.ico + Build_exe.bat in the same folder
+  Put plexbot.py + plexbot.ico + Build_exe.bat in same folder
   Double-click Build_exe.bat — PlexBot.exe appears in ~2 minutes
 
 FFmpeg (optional):
   winget install ffmpeg
-  Enables resolution and codec tag detection. Without it, renaming
-  still works — just without technical tags in filenames.
+  Enables resolution and codec tags in filenames.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  CONTACT & SUPPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Click the ✉ Contact button in the app header to copy the email
-address, or write to DMurr5050@gmail.com directly.
+Click the ✉ Contact button in the app header to copy the email,
+or write to DMurr5050@gmail.com directly.
 
-If PlexBot saves you time, a small donation is appreciated —
-click 💛 Donate via PayPal in the app header.
+If PlexBot saves you time, click 💛 Donate via PayPal in the header.
 
-Disclaimer: PlexBot is not affiliated with Plex Inc., TVmaze,
-OMDb, or TheTVDB in any way.
+PlexBot is not affiliated with Plex Inc., TVmaze, OMDb, TheTVDB,
+or TMDb in any way.
 """
 
 # ── Help / README Dialog ──────────────────────────────────────────────────────
