@@ -3451,16 +3451,18 @@ or TMDb in any way.
 
 # ── Help / README Dialog ──────────────────────────────────────────────────────
 class ReadmeDialog(Toplevel):
-    """Scrollable in-app help viewer displaying README_CONTENT."""
+    """Scrollable in-app help viewer with live GitHub version info."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.title("PlexBot — Help & Documentation")
-        self.geometry("780x640")
+        self.geometry("780x700")
         self.configure(bg=BG_DARK)
         self.resizable(True, True)
         self.grab_set()
         self._build()
+        # Fetch GitHub version info in background
+        threading.Thread(target=self._fetch_github_info, daemon=True).start()
 
     def _build(self):
         # ── Header ───────────────────────────────────────────────────────
@@ -3473,7 +3475,6 @@ class ReadmeDialog(Toplevel):
         Label(hdr, text=f"PlexBot v{VERSION}",
               font=FONT_SMALL, fg=MUTED, bg=BG_PANEL).pack(side=LEFT)
 
-        # Close button
         close_lbl = Label(hdr, text="✕  Close", font=FONT_SMALL,
                           fg=MUTED, bg=BG_PANEL, cursor="hand2", padx=16)
         close_lbl.pack(side=RIGHT)
@@ -3483,9 +3484,78 @@ class ReadmeDialog(Toplevel):
 
         Frame(self, bg=BORDER, height=1).pack(fill=X)
 
+        # ── GitHub info panel ─────────────────────────────────────────────
+        gh = Frame(self, bg=BG_PANEL)
+        gh.pack(fill=X)
+
+        # Left side: version cards
+        cards = Frame(gh, bg=BG_PANEL)
+        cards.pack(side=LEFT, padx=16, pady=10)
+
+        # Installed version card
+        inst_card = Frame(cards, bg=BG_SURFACE, bd=0,
+                          highlightthickness=1, highlightbackground=BORDER)
+        inst_card.pack(side=LEFT, padx=(0, 8))
+        Label(inst_card, text="INSTALLED", font=("Segoe UI", 7, "bold"),
+              fg=MUTED, bg=BG_SURFACE, padx=10).pack(anchor=W, pady=(4, 0))
+        Label(inst_card, text=f"v{VERSION}", font=("Segoe UI", 13, "bold"),
+              fg=ACCENT, bg=BG_SURFACE, padx=10).pack(anchor=W, pady=(0, 6))
+
+        # Latest on main card (live)
+        main_card = Frame(cards, bg=BG_SURFACE, bd=0,
+                          highlightthickness=1, highlightbackground=BORDER)
+        main_card.pack(side=LEFT, padx=(0, 8))
+        Label(main_card, text="LATEST ON MAIN", font=("Segoe UI", 7, "bold"),
+              fg=MUTED, bg=BG_SURFACE, padx=10).pack(anchor=W, pady=(4, 0))
+        self._main_ver_lbl = Label(main_card, text="checking…",
+                                   font=("Segoe UI", 13, "bold"),
+                                   fg=TEXT_DIM, bg=BG_SURFACE, padx=10)
+        self._main_ver_lbl.pack(anchor=W, pady=(0, 6))
+
+        # Latest release card (live)
+        rel_card = Frame(cards, bg=BG_SURFACE, bd=0,
+                         highlightthickness=1, highlightbackground=BORDER)
+        rel_card.pack(side=LEFT)
+        Label(rel_card, text="LATEST RELEASE", font=("Segoe UI", 7, "bold"),
+              fg=MUTED, bg=BG_SURFACE, padx=10).pack(anchor=W, pady=(4, 0))
+        self._rel_ver_lbl = Label(rel_card, text="checking…",
+                                  font=("Segoe UI", 13, "bold"),
+                                  fg=TEXT_DIM, bg=BG_SURFACE, padx=10)
+        self._rel_ver_lbl.pack(anchor=W, pady=(0, 6))
+
+        # Right side: GitHub links
+        links = Frame(gh, bg=BG_PANEL)
+        links.pack(side=RIGHT, padx=16, pady=10)
+
+        def _gh_link(parent, text, url, icon=""):
+            row = Frame(parent, bg=BG_SURFACE, bd=0,
+                        highlightthickness=1, highlightbackground=BORDER,
+                        cursor="hand2")
+            row.pack(fill=X, pady=2)
+            lbl = Label(row, text=f"{icon}  {text}", font=("Segoe UI", 9),
+                        fg=ACCENT_BLUE, bg=BG_SURFACE, cursor="hand2",
+                        padx=12, pady=5, anchor=W)
+            lbl.pack(fill=X)
+            def _open(e, u=url): __import__("webbrowser").open(u)
+            def _enter(e): lbl.configure(fg=WHITE, bg=BG_HOVER); row.configure(bg=BG_HOVER)
+            def _leave(e): lbl.configure(fg=ACCENT_BLUE, bg=BG_SURFACE); row.configure(bg=BG_SURFACE)
+            for w in (row, lbl):
+                w.bind("<Button-1>", _open)
+                w.bind("<Enter>",    _enter)
+                w.bind("<Leave>",    _leave)
+
+        _gh_link(links, "GitHub Repository (main branch)",
+                 f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}", "⌂")
+        _gh_link(links, "GitHub Releases",
+                 GITHUB_RELEASES_PAGE, "⬆")
+        _gh_link(links, "View plexbot.py on GitHub",
+                 f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/blob/{GITHUB_BRANCH}/plexbot.py", "📄")
+
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+
         # ── Scrollable text area ──────────────────────────────────────────
         tf = Frame(self, bg=BG_SURFACE)
-        tf.pack(fill=BOTH, expand=True, padx=0, pady=0)
+        tf.pack(fill=BOTH, expand=True)
 
         sb = Scrollbar(tf, orient=VERTICAL, bg=BG_SURFACE, troughcolor=BG_DARK)
         sb.pack(side=RIGHT, fill=Y)
@@ -3499,24 +3569,18 @@ class ReadmeDialog(Toplevel):
         txt.pack(fill=BOTH, expand=True)
         sb.config(command=txt.yview)
 
-        # ── Insert content with styled sections ───────────────────────────
-        txt.tag_configure("title",   font=("Segoe UI", 14, "bold"), foreground=ACCENT,
-                          spacing3=6)
-        txt.tag_configure("section", font=("Segoe UI", 9,  "bold"), foreground=ACCENT_BLUE,
-                          spacing1=10, spacing3=4)
-        txt.tag_configure("code",    font=("Consolas", 8),          foreground=SUCCESS,
+        txt.tag_configure("title",   font=("Segoe UI", 14, "bold"), foreground=ACCENT,   spacing3=6)
+        txt.tag_configure("section", font=("Segoe UI",  9, "bold"), foreground=ACCENT_BLUE, spacing1=10, spacing3=4)
+        txt.tag_configure("code",    font=("Consolas",  8),          foreground=SUCCESS,
                           background="#0d1a0d", lmargin1=24, lmargin2=24, spacing1=1, spacing3=1)
-        txt.tag_configure("body",    font=("Segoe UI", 9),          foreground=TEXT,
-                          lmargin1=8, lmargin2=8, spacing1=2)
-        txt.tag_configure("dim",     font=("Segoe UI", 8),          foreground=TEXT_DIM,
-                          lmargin1=8)
+        txt.tag_configure("body",    font=("Segoe UI",  9),          foreground=TEXT,     lmargin1=8, lmargin2=8, spacing1=2)
+        txt.tag_configure("dim",     font=("Segoe UI",  8),          foreground=TEXT_DIM, lmargin1=8)
         txt.tag_configure("rule",    foreground=BORDER)
 
         for line in README_CONTENT.splitlines():
             if line.startswith("# "):
                 txt.insert(END, line[2:] + "\n", "title")
             elif line.startswith("━"):
-                # Section header follows the rule line
                 txt.insert(END, line + "\n", "rule")
             elif line.strip().startswith("·") or line.strip().startswith("→"):
                 txt.insert(END, line + "\n", "dim")
@@ -3528,8 +3592,6 @@ class ReadmeDialog(Toplevel):
                 txt.insert(END, line + "\n", "body")
 
         txt.configure(state=DISABLED)
-
-        # Mouse-wheel scrolling
         txt.bind("<MouseWheel>",
                  lambda e: txt.yview_scroll(int(-1*(e.delta/120)), "units"))
 
@@ -3540,6 +3602,70 @@ class ReadmeDialog(Toplevel):
         Label(bot,
               text="Powered by DAT (Dans Automation Tools)  ·  DMurr5050@gmail.com",
               font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(side=LEFT, padx=16, pady=8)
+
+    def _fetch_github_info(self):
+        """Background thread: fetch latest version from main branch and releases."""
+        # ── Main branch version ───────────────────────────────────────────
+        main_ver = "unavailable"
+        try:
+            r = requests.get(GITHUB_RAW_URL, timeout=8)
+            if r.status_code == 200:
+                for line in r.text.splitlines():
+                    if line.strip().startswith("VERSION"):
+                        main_ver = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        except Exception:
+            pass
+
+        # ── Latest release version ────────────────────────────────────────
+        rel_ver = "no releases yet"
+        try:
+            r = requests.get(GITHUB_API_URL,
+                             headers={"Accept": "application/vnd.github+json"},
+                             timeout=8)
+            if r.status_code == 200:
+                tag = r.json().get("tag_name", "").lstrip("vV")
+                if tag:
+                    rel_ver = tag
+        except Exception:
+            pass
+
+        # ── Update labels on main thread ──────────────────────────────────
+        def _update():
+            try:
+                # Colour the main-branch version: green if newer, amber if same, red if older
+                main_parsed = _parse_version(main_ver)
+                curr_parsed = _parse_version(VERSION)
+                if main_parsed > curr_parsed:
+                    main_col = SUCCESS
+                elif main_parsed == curr_parsed:
+                    main_col = ACCENT
+                else:
+                    main_col = TEXT_DIM
+                self._main_ver_lbl.configure(
+                    text=f"v{main_ver}" if main_ver not in ("unavailable",) else main_ver,
+                    fg=main_col)
+
+                # Release version colouring
+                rel_parsed = _parse_version(rel_ver)
+                if rel_ver == "no releases yet":
+                    rel_col = TEXT_DIM
+                elif rel_parsed > curr_parsed:
+                    rel_col = SUCCESS
+                elif rel_parsed == curr_parsed:
+                    rel_col = ACCENT
+                else:
+                    rel_col = TEXT_DIM
+                self._rel_ver_lbl.configure(
+                    text=f"v{rel_ver}" if rel_ver not in ("unavailable", "no releases yet") else rel_ver,
+                    fg=rel_col)
+            except Exception:
+                pass
+
+        try:
+            self.after(0, _update)
+        except Exception:
+            pass
 
 
 # ── Folder Cleanup Dialog ─────────────────────────────────────────────────────
