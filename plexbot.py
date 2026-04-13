@@ -36,7 +36,7 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.08"
+VERSION       = "1.09"
 
 # ── GitHub auto-update settings ───────────────────────────────────────────────
 GITHUB_USER    = "dmurr5050"
@@ -494,56 +494,131 @@ def collect_video_files(paths) -> list:
 
 def find_subtitle_siblings(video_path: Path) -> list:
     """
-    Find subtitle files in the same folder whose stem starts with
-    the video stem (e.g. Show.S01E01.en.srt alongside Show.S01E01.mkv).
-    Returns list of Path objects.
+    Find subtitle files that belong to this video.
+
+    Searches two locations:
+      1. The same folder as the video — files whose stem starts with
+         the video stem (e.g. Show.S01E01.en.srt next to Show.S01E01.mkv).
+      2. Common subtitle subfolders inside the same folder:
+         Subs, Subtitles, Sub, Subtitle, subs, subtitles, sub, subtitle
+         — any subtitle file found there is included regardless of name,
+         since subfolder subs almost always belong to the video in that dir.
+
+    Returns a flat list of Path objects (no duplicates).
     """
-    subs = []
-    stem = video_path.stem.lower()
+    SUB_FOLDER_NAMES = {
+        "subs", "subtitles", "sub", "subtitle",
+        "Subs", "Subtitles", "Sub", "Subtitle",
+    }
+
+    found = []
+    seen  = set()
+    stem  = video_path.stem.lower()
+    parent = video_path.parent
+
+    def _add(f: Path):
+        if f not in seen:
+            seen.add(f)
+            found.append(f)
+
+    # ── 1. Same-folder siblings ───────────────────────────────────────────────
     try:
-        for f in video_path.parent.iterdir():
-            if f.suffix.lower() in SUBTITLE_EXTENSIONS:
-                # Match if subtitle stem starts with video stem
-                # This covers: Show.S01E01.srt, Show.S01E01.en.srt, Show.S01E01.en.sdh.srt
+        for f in parent.iterdir():
+            if f.is_file() and f.suffix.lower() in SUBTITLE_EXTENSIONS:
                 if f.stem.lower().startswith(stem):
-                    subs.append(f)
+                    _add(f)
     except Exception:
         pass
-    return subs
+
+    # ── 2. Subtitle subfolders ────────────────────────────────────────────────
+    try:
+        for entry in parent.iterdir():
+            if entry.is_dir() and entry.name in SUB_FOLDER_NAMES:
+                try:
+                    for f in entry.iterdir():
+                        if f.is_file() and f.suffix.lower() in SUBTITLE_EXTENSIONS:
+                            _add(f)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    return found
 
 
 def build_subtitle_name(new_video_name: str, sub_path: Path) -> str:
     """
     Derive the new subtitle filename from the new video name.
-    Preserves any language/flag suffix after the video stem.
-    e.g. Show - S01E01 - Title.mkv  +  Show.S01E01.en.sdh.srt
-      -> Show - S01E01 - Title.en.sdh.srt
+
+    For same-folder subs whose stem starts with the video stem, language
+    tags are preserved:
+        Show.S01E01.en.sdh.srt  ->  Show - S01E01 - Title.en.sdh.srt
+
+    For subfolder subs (e.g. from a Subs/ folder) whose stem may be
+    completely different, we try to extract any recognisable language
+    code from the subtitle filename, then fall back to a plain rename:
+        English.srt             ->  Show - S01E01 - Title.en.srt
+        2_English.srt           ->  Show - S01E01 - Title.en.srt
+        subtitle.srt            ->  Show - S01E01 - Title.srt
     """
-    video_stem   = Path(new_video_name).stem          # "Show - S01E01 - Title"
-    sub_ext      = sub_path.suffix.lower()            # ".srt"
+    # ISO 639-1 two-letter codes and common English names mapped to code
+    LANG_NAMES = {
+        "english": "en", "french": "fr", "spanish": "es", "german": "de",
+        "italian": "it", "portuguese": "pt", "dutch": "nl", "russian": "ru",
+        "japanese": "ja", "chinese": "zh", "korean": "ko", "arabic": "ar",
+        "hindi": "hi", "polish": "pl", "turkish": "tr", "swedish": "sv",
+        "norwegian": "no", "danish": "da", "finnish": "fi", "czech": "cs",
+        "hungarian": "hu", "romanian": "ro", "greek": "el", "hebrew": "he",
+        "thai": "th", "vietnamese": "vi", "indonesian": "id", "malay": "ms",
+    }
+    # Two-letter ISO codes we'll recognise directly
+    ISO2 = set(LANG_NAMES.values()) | {
+        "en","fr","es","de","it","pt","nl","ru","ja","zh","ko","ar",
+        "hi","pl","tr","sv","no","da","fi","cs","hu","ro","el","he",
+    }
+    # Flag-style tags to preserve
+    TAGS = {"sdh", "forced", "cc", "hi", "pgs", "full", "default"}
 
-    # Try to extract language suffix from sub stem beyond the video stem
-    # e.g. original sub stem = "Show.S01E01.en.sdh", video stem was "Show.S01E01"
-    # We want to preserve ".en.sdh"
-    # Strategy: strip shared prefix chars, keep remainder as language tag
-    orig_video_stem = sub_path.stem  # original sub stem without final ext
-    # Remove any dotted suffix shared with any known subtitle lang codes
-    # Just preserve everything after the first dot past a base that looks like video
-    # Simple approach: if sub stem has more parts than video stem, keep extras
-    sub_parts   = sub_path.stem.split(".")
-    extra_parts = []
-    for part in reversed(sub_parts):
-        if part.lower() in SUBTITLE_EXTENSIONS or len(part) <= 5:
-            extra_parts.insert(0, part)
-        else:
-            break
-    # Filter to only the "extra" language-style parts (short, like "en", "sdh", "forced")
-    lang_parts = [p for p in extra_parts
-                  if len(p) <= 8 and p.lower() not in
-                  {Path(new_video_name).stem.lower()}]
+    video_stem = Path(new_video_name).stem
+    sub_ext    = sub_path.suffix.lower()
+    sub_stem   = sub_path.stem.lower()
 
-    if lang_parts:
-        return f"{video_stem}.{'.'.join(lang_parts)}{sub_ext}"
+    # ── Case 1: sub stem starts with the video stem → extract trailing tags ──
+    if sub_stem.startswith(video_stem.lower()):
+        sub_parts   = sub_path.stem.split(".")
+        extra_parts = []
+        for part in reversed(sub_parts):
+            if part.lower() in SUBTITLE_EXTENSIONS or len(part) <= 5:
+                extra_parts.insert(0, part)
+            else:
+                break
+        lang_parts = [p for p in extra_parts
+                      if len(p) <= 8 and p.lower() != video_stem.lower()]
+        if lang_parts:
+            return f"{video_stem}.{'.'.join(lang_parts)}{sub_ext}"
+        return f"{video_stem}{sub_ext}"
+
+    # ── Case 2: subfolder sub with a different stem → sniff language tag ─────
+    # Split stem on common separators and look for lang codes / names
+    import re as _re
+    parts = _re.split(r'[.\-_\s]+', sub_path.stem.lower())
+    lang_tag  = None
+    flag_tags = []
+    for part in parts:
+        if lang_tag is None:
+            if part in ISO2:
+                lang_tag = part
+            elif part in LANG_NAMES:
+                lang_tag = LANG_NAMES[part]
+        elif part in TAGS:
+            flag_tags.append(part)
+
+    if lang_tag:
+        suffix_parts = [lang_tag] + flag_tags
+        return f"{video_stem}.{'.'.join(suffix_parts)}{sub_ext}"
+
+    # No language info found — just rename to match video, avoid collision
+    # if multiple unnamed subs exist we append the original stem
     return f"{video_stem}{sub_ext}"
 
 
@@ -980,6 +1055,7 @@ class BaseTab(Frame):
         self.opt_use_year_in_folder  = BooleanVar(value=True)  # TV: include year in show folder/filename
         self.opt_create_movie_folder = BooleanVar(value=True)  # Movie: create per-movie subfolder
         self.opt_threads     = StringVar(value="5")      # concurrent lookup threads
+        self.opt_auto_cleanup = BooleanVar(value=True)   # auto-clean junk files after move
         self._build()
 
     def _build(self):
@@ -1134,6 +1210,32 @@ class BaseTab(Frame):
                       + list(inner.winfo_children())
                       + list(txt_col.winfo_children())):
                 w.bind("<Button-1>", lambda e, m=mode: self._set_file_mode(m))
+
+        # ── Auto Cleanup after move ───────────────────────────────────────
+        Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
+        Label(sb, text="POST-RENAME CLEANUP", font=("Segoe UI", 8, "bold"),
+              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
+        clf = Frame(sb, bg=BG_SURFACE, bd=0, highlightthickness=1,
+                    highlightbackground=BORDER)
+        clf.pack(fill=X, padx=16)
+        cl_row = Frame(clf, bg=BG_SURFACE)
+        cl_row.pack(fill=X, padx=10, pady=5)
+        self._auto_cleanup_cb = Checkbutton(
+            cl_row,
+            text="  Auto-clean junk files after move",
+            variable=self.opt_auto_cleanup,
+            font=FONT_SMALL,
+            fg=TEXT, bg=BG_SURFACE,
+            selectcolor=BG_DARK,
+            activebackground=BG_SURFACE, activeforeground=TEXT,
+            highlightthickness=0, bd=0, cursor="hand2",
+            disabledforeground=MUTED,
+        )
+        self._auto_cleanup_cb.pack(side=LEFT)
+        Tooltip(self._auto_cleanup_cb,
+                "After a Move, removes junk sidecar files (.nfo, .jpg, .txt etc.)\n"
+                "from the source folder automatically.\n"
+                "Disabled when using Copy mode.")
 
         # ── Include in Filename inside body ───────────────────────────────
         Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
@@ -1365,6 +1467,13 @@ class BaseTab(Frame):
                     w.configure(bg=col_c)
                 except Exception:
                     pass
+
+        # Grey out / re-enable the auto-cleanup checkbox
+        if hasattr(self, "_auto_cleanup_cb"):
+            if mode == "copy":
+                self._auto_cleanup_cb.configure(state=DISABLED, cursor="arrow")
+            else:
+                self._auto_cleanup_cb.configure(state=NORMAL, cursor="hand2")
 
     def _lookup_label(self): return "🔍  Lookup"
 
@@ -2158,6 +2267,47 @@ class BaseTab(Frame):
                     if not folder.exists():
                         removed_folders.append(folder)
 
+            # ── Auto-cleanup junk sidecar files from source folders ───────
+            # Only when: move mode AND destination differs from source AND option enabled
+            cleaned_files = []
+            if not is_copy and dest_path and src_folders and self.opt_auto_cleanup.get():
+                dest_root_path = Path(dest_root)
+                # Collect every unique source folder that is NOT inside
+                # the destination (so we never clean the destination itself)
+                cleanup_dirs = set()
+                for folder in src_folders:
+                    try:
+                        folder.relative_to(dest_root_path)
+                        # This folder is inside the destination — skip it
+                    except ValueError:
+                        cleanup_dirs.add(folder)
+
+                for folder in cleanup_dirs:
+                    if not folder.exists():
+                        continue
+                    try:
+                        for f in folder.iterdir():
+                            if (f.is_file() and
+                                    f.suffix.lower() in CLEANUP_EXTENSIONS):
+                                try:
+                                    f.unlink()
+                                    cleaned_files.append(f)
+                                except Exception:
+                                    pass
+                        # Also clean any subtitle subfolder if now empty
+                        SUB_FOLDER_NAMES = {
+                            "subs","subtitles","sub","subtitle",
+                            "Subs","Subtitles","Sub","Subtitle",
+                        }
+                        for entry in folder.iterdir():
+                            if (entry.is_dir() and
+                                    entry.name in SUB_FOLDER_NAMES):
+                                try_remove_empty_folder(entry)
+                    except Exception:
+                        pass
+                    # Remove the source folder itself if now empty
+                    try_remove_empty_folder(folder)
+
             # ── Save history ──────────────────────────────────────────────
             tab_type    = "TV" if isinstance(self, TVTab) else "Movie"
             new_history = []
@@ -2185,6 +2335,7 @@ class BaseTab(Frame):
                 if sub_c[0]:        status += f", {sub_c[0]} subtitle(s)"
                 if errors_c[0]:     status += f", {errors_c[0]} error(s)"
                 if removed_folders: status += f", {len(removed_folders)} empty folder(s) deleted"
+                if cleaned_files:   status += f", {len(cleaned_files)} junk file(s) cleaned"
                 self.app.set_status(status)
                 self._enable_btn(self.lookup_btn, self._start_lookup)
                 if any(e["status"] == "done" for e in self.file_entries):
@@ -3159,7 +3310,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.08
+README_CONTENT = """# 🎬 PlexBot v1.09
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -3241,45 +3392,21 @@ TMDb     — Built-in token, no setup required. Excellent coverage.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- API KEYS
+ SUBTITLE DETECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TVmaze       — No key needed. Works straight away.
-TheTVDB      — Built-in key. No setup needed.
-TMDb         — Built-in token. No setup needed.
-OMDb Movies  — Free key required (1,000 lookups/day).
+PlexBot finds subtitle files in two locations:
 
-To get an OMDb key:
-  1. Go to omdbapi.com/apikey.aspx
-  2. Select the Free tier and enter your email
-  3. Your key arrives by email almost immediately
-  4. Open the Movies tab and paste the key into OMDB API KEY
+  1. Same folder as the video — any subtitle whose filename starts
+     with the video stem (e.g. Show.S01E01.en.srt next to the .mkv).
+     Language tags like .en, .fr, .sdh, .forced are preserved.
 
-The key is saved automatically — you only need to enter it once.
+  2. Subtitle subfolders — checks for any folder named Subs,
+     Subtitles, Sub, or Subtitle (any capitalisation) inside the
+     video's directory. All subtitle files found there are included.
+     Language is detected from the filename (e.g. English.srt → .en).
 
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- AUTO-UPDATE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-PlexBot checks GitHub for updates automatically on startup.
-
-  · Check runs in the background — no delay to launch
-  · If a newer version is found, a green banner appears below
-    the header: "PlexBot v1.0x is available — click to update"
-  · Click the banner to open the Update dialog
-  · Click ✕ on the banner to dismiss it
-
-Running from source (.py):
-  PlexBot downloads the new plexbot.py, verifies it, replaces
-  the current file, then offers to restart automatically.
-
-Running as PlexBot.exe:
-  The EXE cannot update itself. Clicking the banner opens the
-  GitHub Releases page so you can download the new EXE.
-
-Updates are hosted at:
-  github.com/dmurr5050/Plexbot
+Subtitles are moved alongside the video to the destination folder.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3291,6 +3418,15 @@ Click the ▶ SETTINGS header in the right-hand panel to expand settings.
 FILE MODE
   ✂  Move               — File is moved and renamed. Original is removed.
   ⎘  Copy & Keep        — Renamed copy made at destination. Original kept.
+
+POST-RENAME CLEANUP
+  Auto-clean junk files after move
+  → After a successful Move, automatically removes junk sidecar files
+    (.nfo, .jpg, .txt, .idx, .htm, .png, .url, .bif) from the source
+    folder. Also removes empty Subs/Subtitles subfolders and the source
+    folder itself if empty.
+  → On by default. Grayed out when Copy mode is selected.
+  → Only runs when a destination folder is set (different from source).
 
 FOLDER STRUCTURE (TV Shows)
   Include year in show folder & filename
@@ -3320,24 +3456,39 @@ SEARCH OPTIONS
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ AUTO-UPDATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PlexBot checks GitHub for updates automatically on startup.
+
+  · Check runs in the background — no delay to launch
+  · If a newer version is found, a green banner appears below
+    the header: "PlexBot v1.0x is available — click to update"
+  · Click the banner to open the Update dialog
+  · Click ✕ on the banner to dismiss it
+
+Running from source (.py):
+  PlexBot downloads the new plexbot.py, verifies it, replaces
+  the current file, then offers to restart automatically.
+
+Running as PlexBot.exe:
+  The EXE cannot update itself. Clicking the banner opens the
+  GitHub Releases page so you can download the new EXE.
+
+Updates are hosted at:
+  github.com/dmurr5050/Plexbot
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  PERFORMANCE — LARGE BATCHES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  · TV: one show-search per unique show, not per episode. All show
-    searches and episode fetches run in parallel.
-
+  · TV: one show-search per unique show, not per episode.
   · Movies: all unique titles searched in parallel. Duplicate titles
-    only searched once per session. Confident matches skip the
-    detail fetch, halving API calls.
-
-  · Lookup UI debounced at 100 ms — stays responsive during 100+
-    concurrent threads.
-
-  · Rename operations parallel with debounced UI at 150 ms.
-
-  · History dialog virtual rendering — instant open with 4,000+ entries.
-
-  · Apply & Rename button stays disabled until full batch completes.
+    only searched once. Confident matches skip the detail fetch.
+  · Lookup UI debounced at 100 ms. Rename UI debounced at 150 ms.
+  · History dialog virtual rendering — instant with 4,000+ entries.
+  · Apply & Rename stays disabled until full batch completes.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3345,12 +3496,8 @@ SEARCH OPTIONS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 When PlexBot cannot confidently match a filename, a search dialog
-opens centred over the app window:
-
-  · Pre-filled search box, ready to edit
-  · Scrollable list of matches with title, year, description
-  · Click any result to select it, then confirm
-  · Batch continues after you confirm or skip
+opens centred over the app window. Pre-filled search box, scrollable
+results list, continue batch after confirming or skipping.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3365,27 +3512,16 @@ Right-click any file row during or after a lookup:
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- RETRY ERRORS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-After a lookup completes, failed files show an ERROR badge.
-The lookup button changes to 🔄 Retry Errors (N). Click it to retry
-only the errored files — successfully looked-up files stay untouched.
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  FOLDER CLEANUP  (🧹 button in header)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Removes junk sidecar files recursively from any folder.
+Manual cleanup tool — removes junk sidecar files recursively.
 
 Files removed:  .txt  .idx  .nfo  .jpg  .htm  .png  .url  .bif
 Also removes:   Empty subfolders · System Volume Information
 
-How to use:
-  1. Folder defaults to last folder you loaded files from
-  2. Click 🔍 Scan to preview everything that will be deleted
-  3. Click 🗑 Delete All Listed Files to remove
+Use this for folders not covered by the auto-cleanup, or to clean
+up folders before loading files into PlexBot.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
