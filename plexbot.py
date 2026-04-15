@@ -36,7 +36,7 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.09"
+VERSION       = "1.10"
 
 # ── GitHub auto-update settings ───────────────────────────────────────────────
 GITHUB_USER    = "dmurr5050"
@@ -1056,6 +1056,18 @@ class BaseTab(Frame):
         self.opt_create_movie_folder = BooleanVar(value=True)  # Movie: create per-movie subfolder
         self.opt_threads     = StringVar(value="5")      # concurrent lookup threads
         self.opt_auto_cleanup = BooleanVar(value=True)   # auto-clean junk files after move
+        self._source_roots    = set()   # top-level folders/files the user explicitly added
+        # Per-extension cleanup toggles (all on by default)
+        self.opt_clean_nfo  = BooleanVar(value=True)
+        self.opt_clean_jpg  = BooleanVar(value=True)
+        self.opt_clean_txt  = BooleanVar(value=True)
+        self.opt_clean_idx  = BooleanVar(value=True)
+        self.opt_clean_htm  = BooleanVar(value=True)
+        self.opt_clean_png  = BooleanVar(value=True)
+        self.opt_clean_url  = BooleanVar(value=True)
+        self.opt_clean_bif  = BooleanVar(value=True)
+        self.opt_clean_custom       = BooleanVar(value=False)  # custom extensions toggle
+        self.opt_clean_custom_exts  = StringVar(value="")     # comma-separated custom extensions
         self._build()
 
     def _build(self):
@@ -1073,9 +1085,51 @@ class BaseTab(Frame):
         self._table(left)
 
         Frame(body, bg=BORDER, width=1).pack(side=RIGHT, fill=Y)
-        right = Frame(body, bg=BG_PANEL, width=280)
-        right.pack(side=RIGHT, fill=Y)
-        right.pack_propagate(False)
+        right_outer = Frame(body, bg=BG_PANEL, width=280)
+        right_outer.pack(side=RIGHT, fill=Y)
+        right_outer.pack_propagate(False)
+
+        # Scrollable right panel
+        right_sb = Scrollbar(right_outer, orient=VERTICAL,
+                             bg=BG_SURFACE, troughcolor=BG_DARK, width=8)
+        right_sb.pack(side=RIGHT, fill=Y)
+        right_canvas = Canvas(right_outer, bg=BG_PANEL, highlightthickness=0,
+                              bd=0, yscrollcommand=right_sb.set)
+        right_canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        right_sb.config(command=right_canvas.yview)
+
+        right = Frame(right_canvas, bg=BG_PANEL)
+        right_win = right_canvas.create_window((0, 0), window=right, anchor=NW)
+
+        def _on_right_configure(e):
+            right_canvas.configure(scrollregion=right_canvas.bbox("all"))
+        def _on_right_canvas_resize(e):
+            right_canvas.itemconfig(right_win, width=e.width)
+        right.bind("<Configure>", _on_right_configure)
+        right_canvas.bind("<Configure>", _on_right_canvas_resize)
+
+        # Mouse-wheel scroll — use a single persistent bind_all handler that
+        # only scrolls when the pointer is actually over the right panel.
+        # We track this with a flag rather than bind/unbind on Enter/Leave,
+        # because child widget Leave events would otherwise drop the binding
+        # mid-panel as the cursor moves between widgets.
+        self._right_panel_hovered = False
+
+        def _right_wheel(e):
+            if self._right_panel_hovered:
+                right_canvas.yview_scroll(int(-1*(e.delta/120)), "units")
+
+        right_canvas.bind_all("<MouseWheel>", _right_wheel)
+
+        def _set_hover_true(e):
+            self._right_panel_hovered = True
+        def _set_hover_false(e):
+            # Only clear if the pointer has truly left right_outer entirely
+            self._right_panel_hovered = False
+
+        right_outer.bind("<Enter>", _set_hover_true)
+        right_outer.bind("<Leave>", _set_hover_false)
+
         self._right_panel(right)
 
     def _toolbar(self, p):
@@ -1211,31 +1265,117 @@ class BaseTab(Frame):
                       + list(txt_col.winfo_children())):
                 w.bind("<Button-1>", lambda e, m=mode: self._set_file_mode(m))
 
-        # ── Auto Cleanup after move ───────────────────────────────────────
+        # ── Auto Cleanup after move — expandable ─────────────────────────
         Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
-        Label(sb, text="POST-RENAME CLEANUP", font=("Segoe UI", 8, "bold"),
-              fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(8, 4))
-        clf = Frame(sb, bg=BG_SURFACE, bd=0, highlightthickness=1,
-                    highlightbackground=BORDER)
-        clf.pack(fill=X, padx=16)
-        cl_row = Frame(clf, bg=BG_SURFACE)
-        cl_row.pack(fill=X, padx=10, pady=5)
+
+        # Section header row (toggle expand) — arrow + title only
+        self._cleanup_open = BooleanVar(value=False)
+        cl_hdr = Frame(sb, bg=BG_PANEL)
+        cl_hdr.pack(fill=X, padx=16, pady=(8, 0))
+
+        self._cleanup_arrow = Label(cl_hdr, text="▶", font=("Segoe UI", 8, "bold"),
+                                    fg=self.color, bg=BG_PANEL, width=2, anchor=W,
+                                    cursor="hand2")
+        self._cleanup_arrow.pack(side=LEFT)
+        cl_title = Label(cl_hdr, text="POST-RENAME CLEANUP",
+                         font=("Segoe UI", 8, "bold"), fg=self.color, bg=BG_PANEL,
+                         cursor="hand2")
+        cl_title.pack(side=LEFT)
+
+        def _toggle_cleanup(e=None):
+            if self._cleanup_open.get():
+                self._cleanup_open.set(False)
+                self._cleanup_body.pack_forget()
+                self._cleanup_arrow.configure(text="▶")
+            else:
+                self._cleanup_open.set(True)
+                self._cleanup_body.pack(fill=X, after=cl_enable_row)
+                self._cleanup_arrow.configure(text="▼")
+
+        self._cleanup_arrow.bind("<Button-1>", _toggle_cleanup)
+        cl_title.bind("<Button-1>", _toggle_cleanup)
+
+        # Enable checkbox on its own row — completely separate from the toggle
+        cl_enable_row = Frame(sb, bg=BG_PANEL)
+        cl_enable_row.pack(fill=X, padx=16, pady=(2, 0))
         self._auto_cleanup_cb = Checkbutton(
-            cl_row,
-            text="  Auto-clean junk files after move",
+            cl_enable_row,
+            text="  Enable auto-clean after move",
             variable=self.opt_auto_cleanup,
             font=FONT_SMALL,
-            fg=TEXT, bg=BG_SURFACE,
+            fg=TEXT, bg=BG_PANEL,
             selectcolor=BG_DARK,
-            activebackground=BG_SURFACE, activeforeground=TEXT,
-            highlightthickness=0, bd=0, cursor="hand2",
-            disabledforeground=MUTED,
+            activebackground=BG_PANEL, activeforeground=TEXT,
+            highlightthickness=0, bd=0,
+            cursor="hand2", disabledforeground=MUTED,
         )
         self._auto_cleanup_cb.pack(side=LEFT)
         Tooltip(self._auto_cleanup_cb,
-                "After a Move, removes junk sidecar files (.nfo, .jpg, .txt etc.)\n"
-                "from the source folder automatically.\n"
-                "Disabled when using Copy mode.")
+                "After a Move, removes junk sidecar files from the\n"
+                "source folder automatically. Grayed out in Copy mode.")
+
+        # Expandable body
+        self._cleanup_body = Frame(sb, bg=BG_PANEL)
+        # (not packed yet — collapsed by default)
+
+        cbody = self._cleanup_body
+        clf = Frame(cbody, bg=BG_SURFACE, bd=0,
+                    highlightthickness=1, highlightbackground=BORDER)
+        clf.pack(fill=X, padx=16, pady=(4, 0))
+
+        # Each extension as its own checkbox
+        self._cleanup_ext_cbs = {}   # ext -> Checkbutton widget
+        for var, ext, label in [
+            (self.opt_clean_nfo, ".nfo",  ".nfo  — metadata files"),
+            (self.opt_clean_jpg, ".jpg",  ".jpg  — poster/fanart images"),
+            (self.opt_clean_txt, ".txt",  ".txt  — text files"),
+            (self.opt_clean_idx, ".idx",  ".idx  — subtitle index files"),
+            (self.opt_clean_htm, ".htm",  ".htm  — HTML files"),
+            (self.opt_clean_png, ".png",  ".png  — PNG images"),
+            (self.opt_clean_url, ".url",  ".url  — internet shortcuts"),
+            (self.opt_clean_bif, ".bif",  ".bif  — Plex trick-play files"),
+        ]:
+            row = Frame(clf, bg=BG_SURFACE)
+            row.pack(fill=X, padx=8, pady=1)
+            cb = Checkbutton(row, text=label, variable=var,
+                             font=FONT_MONO_SM,
+                             fg=TEXT, bg=BG_SURFACE, selectcolor=BG_DARK,
+                             activebackground=BG_SURFACE, activeforeground=TEXT,
+                             highlightthickness=0, bd=0, cursor="hand2",
+                             disabledforeground=MUTED)
+            cb.pack(side=LEFT, anchor=W)
+            self._cleanup_ext_cbs[ext] = cb
+
+        # Custom extensions row
+        Frame(clf, bg=BORDER, height=1).pack(fill=X, padx=4, pady=(4, 0))
+        cust_row = Frame(clf, bg=BG_SURFACE)
+        cust_row.pack(fill=X, padx=8, pady=(4, 6))
+        self._cleanup_custom_cb = Checkbutton(
+            cust_row, text="Custom:", variable=self.opt_clean_custom,
+            font=FONT_SMALL,
+            fg=TEXT, bg=BG_SURFACE, selectcolor=BG_DARK,
+            activebackground=BG_SURFACE, activeforeground=TEXT,
+            highlightthickness=0, bd=0, cursor="hand2",
+            disabledforeground=MUTED,
+            command=self._update_custom_ext_entry,
+        )
+        self._cleanup_custom_cb.pack(side=LEFT)
+        Tooltip(self._cleanup_custom_cb,
+                "Enter comma-separated extensions to also delete.\n"
+                "Example:  .srt, .nfo, .sample")
+        self._cleanup_custom_entry = Entry(
+            cust_row, textvariable=self.opt_clean_custom_exts,
+            font=FONT_MONO_SM, bg=BG_DARK, fg=TEXT_DIM,
+            bd=0, insertbackground=self.color,
+            highlightthickness=1, highlightbackground=BORDER,
+            state=DISABLED,
+        )
+        self._cleanup_custom_entry.pack(side=LEFT, fill=X, expand=True,
+                                        padx=(6, 0), ipady=3)
+
+        Label(cbody, text="Only runs on Move with a destination set.",
+              font=("Segoe UI", 7), fg=MUTED, bg=BG_PANEL).pack(
+              anchor=W, padx=16, pady=(3, 0))
 
         # ── Include in Filename inside body ───────────────────────────────
         Frame(sb, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
@@ -1445,6 +1585,16 @@ class BaseTab(Frame):
             self._settings_open.set(True)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+    def _update_custom_ext_entry(self):
+        """Enable/disable the custom extension text field based on its checkbox."""
+        if hasattr(self, "_cleanup_custom_entry"):
+            if self.opt_clean_custom.get():
+                self._cleanup_custom_entry.configure(
+                    state=NORMAL, bg=BG_SURFACE, fg=TEXT)
+            else:
+                self._cleanup_custom_entry.configure(
+                    state=DISABLED, bg=BG_DARK, fg=TEXT_DIM)
+
     def _set_file_mode(self, mode: str):
         """Switch between 'move' and 'copy' and repaint the toggle buttons."""
         self.file_mode.set(mode)
@@ -1456,24 +1606,33 @@ class BaseTab(Frame):
             fg_c  = "#000"    if sel else TEXT
             fg_m  = "#000"    if sel else MUTED
             fg_i  = "#000"    if sel else TEXT_DIM
-            btn_frame.configure(bg=col_c,
-                                highlightbackground=bdr)
+            btn_frame.configure(bg=col_c, highlightbackground=bdr)
             inner.configure(bg=col_c)
             icon_lbl.configure(bg=col_c, fg=fg_i)
             for i, lbl in enumerate(txt_lbls):
                 lbl.configure(bg=col_c, fg=fg_c if i == 0 else fg_m)
             for w in [inner] + list(inner.winfo_children()):
-                try:
-                    w.configure(bg=col_c)
-                except Exception:
-                    pass
+                try: w.configure(bg=col_c)
+                except Exception: pass
 
-        # Grey out / re-enable the auto-cleanup checkbox
+        # Grey out / re-enable all cleanup widgets when switching mode
+        is_copy = (mode == "copy")
+        cb_state = DISABLED if is_copy else NORMAL
+        cb_cursor = "arrow" if is_copy else "hand2"
         if hasattr(self, "_auto_cleanup_cb"):
-            if mode == "copy":
-                self._auto_cleanup_cb.configure(state=DISABLED, cursor="arrow")
+            self._auto_cleanup_cb.configure(state=cb_state, cursor=cb_cursor)
+        if hasattr(self, "_cleanup_ext_cbs"):
+            for cb in self._cleanup_ext_cbs.values():
+                cb.configure(state=cb_state, cursor=cb_cursor)
+        if hasattr(self, "_cleanup_custom_cb"):
+            self._cleanup_custom_cb.configure(state=cb_state, cursor=cb_cursor)
+        if hasattr(self, "_cleanup_custom_entry"):
+            # Only enable entry if both move mode AND custom checkbox is ticked
+            if is_copy:
+                self._cleanup_custom_entry.configure(state=DISABLED,
+                                                     bg=BG_DARK, fg=TEXT_DIM)
             else:
-                self._auto_cleanup_cb.configure(state=NORMAL, cursor="hand2")
+                self._update_custom_ext_entry()
 
     def _lookup_label(self): return "🔍  Lookup"
 
@@ -1638,18 +1797,20 @@ class BaseTab(Frame):
     def _add_files(self):
         dlg = AddFilesDialog(self.app, self.color)
         if dlg.result:
-            self._ingest(dlg.result)
+            # dlg.result is already expanded video files; roots are the items the user picked
+            self._ingest(dlg.result, roots=[Path(p) for p in dlg.result])
 
     def _add_folder(self):
         folder = filedialog.askdirectory(title="Select folder (subfolders included)")
         if folder:
-            self._ingest(collect_video_files([Path(folder)]))
+            root = Path(folder)
+            self._ingest(collect_video_files([root]), roots=[root])
 
     def _pick_dest(self):
         f = filedialog.askdirectory(title="Select destination folder")
         if f: self.dest_var.set(f)
 
-    def _ingest(self, paths):
+    def _ingest(self, paths, roots=None):
         existing = {e["path"] for e in self.file_entries}
         added = 0
         for p in paths:
@@ -1661,7 +1822,19 @@ class BaseTab(Frame):
             })
             existing.add(p); added += 1
         if added:
-            # Remember the parent folder of the most recently added file
+            # Track protected roots — the parent of whatever the user dragged.
+            # If they dragged a folder:  protect that folder's parent (not the folder itself)
+            # If they dragged files:     protect the files' parent folder
+            if roots:
+                for r in roots:
+                    r = Path(r)
+                    if r.is_dir():
+                        self._source_roots.add(r.parent)  # protect parent, not the folder
+                    else:
+                        self._source_roots.add(r.parent)  # protect the folder containing the file
+            else:
+                for p in paths:
+                    self._source_roots.add(Path(p).parent)
             last = paths[-1] if paths else None
             if last:
                 self.app.last_source_folder = str(Path(last).parent)
@@ -1689,17 +1862,18 @@ class BaseTab(Frame):
     def _on_drop(self, event):
         """Handle files/folders dropped onto the canvas."""
         try:
-            # tkinterdnd2 gives a Tcl list string — parse it properly
             raw   = event.data
             paths = self.tk.splitlist(raw)
-            found = collect_video_files([Path(p) for p in paths])
+            roots = [Path(p) for p in paths]
+            found = collect_video_files(roots)
             if found:
-                self._ingest(found)
+                self._ingest(found, roots=roots)
         except Exception:
             pass
 
     def _clear_all(self):
         self.file_entries.clear()
+        self._source_roots.clear()
         self._refresh(); self._summary()
         self._disable_btn(self.apply_btn)
         self.drop_overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
@@ -2271,42 +2445,72 @@ class BaseTab(Frame):
             # Only when: move mode AND destination differs from source AND option enabled
             cleaned_files = []
             if not is_copy and dest_path and src_folders and self.opt_auto_cleanup.get():
+                # Build the set of extensions to delete from individual toggles
+                ext_map = {
+                    ".nfo": self.opt_clean_nfo,
+                    ".jpg": self.opt_clean_jpg,
+                    ".txt": self.opt_clean_txt,
+                    ".idx": self.opt_clean_idx,
+                    ".htm": self.opt_clean_htm,
+                    ".png": self.opt_clean_png,
+                    ".url": self.opt_clean_url,
+                    ".bif": self.opt_clean_bif,
+                }
+                active_exts = {ext for ext, var in ext_map.items() if var.get()}
+
+                # Add any custom extensions
+                if self.opt_clean_custom.get():
+                    raw = self.opt_clean_custom_exts.get()
+                    for part in raw.split(","):
+                        part = part.strip().lower()
+                        if part and not part.startswith("."):
+                            part = "." + part
+                        if part:
+                            active_exts.add(part)
+
                 dest_root_path = Path(dest_root)
-                # Collect every unique source folder that is NOT inside
-                # the destination (so we never clean the destination itself)
+
+                # Collect source folders not inside the destination
                 cleanup_dirs = set()
                 for folder in src_folders:
                     try:
                         folder.relative_to(dest_root_path)
-                        # This folder is inside the destination — skip it
+                        # Inside destination — skip
                     except ValueError:
                         cleanup_dirs.add(folder)
+
+                # Protected = the parent of whatever the user dragged in.
+                # Dragged a folder  → its parent is protected, the folder itself can be deleted.
+                # Dragged files     → their containing folder is protected.
+                protected = set(self._source_roots)
 
                 for folder in cleanup_dirs:
                     if not folder.exists():
                         continue
+                    # Collect all files recursively first, then delete
                     try:
-                        for f in folder.iterdir():
-                            if (f.is_file() and
-                                    f.suffix.lower() in CLEANUP_EXTENSIONS):
-                                try:
-                                    f.unlink()
-                                    cleaned_files.append(f)
-                                except Exception:
-                                    pass
-                        # Also clean any subtitle subfolder if now empty
-                        SUB_FOLDER_NAMES = {
-                            "subs","subtitles","sub","subtitle",
-                            "Subs","Subtitles","Sub","Subtitle",
-                        }
-                        for entry in folder.iterdir():
-                            if (entry.is_dir() and
-                                    entry.name in SUB_FOLDER_NAMES):
-                                try_remove_empty_folder(entry)
+                        all_files = [f for f in folder.rglob("*") if f.is_file()]
                     except Exception:
-                        pass
-                    # Remove the source folder itself if now empty
-                    try_remove_empty_folder(folder)
+                        all_files = []
+                    for f in all_files:
+                        if f.suffix.lower() in active_exts:
+                            try:
+                                f.unlink()
+                                cleaned_files.append(f)
+                            except Exception:
+                                pass
+                    # Remove now-empty subdirs deepest first
+                    try:
+                        subdirs = sorted(
+                            [d for d in folder.rglob("*") if d.is_dir()],
+                            key=lambda p: len(p.parts), reverse=True)
+                    except Exception:
+                        subdirs = []
+                    for sub in subdirs:
+                        try_remove_empty_folder(sub)
+                    # Only remove the folder itself if it is NOT a protected root
+                    if folder not in protected:
+                        try_remove_empty_folder(folder)
 
             # ── Save history ──────────────────────────────────────────────
             tab_type    = "TV" if isinstance(self, TVTab) else "Movie"
@@ -3310,7 +3514,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.09
+README_CONTENT = """# 🎬 PlexBot v1.10
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -3351,9 +3555,6 @@ Files are organised into a structured folder hierarchy:
                   ├── Band of Brothers (2001) - S01E01 - Currahee.mkv
                   └── Band of Brothers (2001) - S01E01 - Currahee.en.srt
 
-Smart grouping: episodes of the same show share a single show-search
-call. 20 episodes of one show = 1 search + 20 parallel episode fetches.
-
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  HOW IT WORKS — MOVIES
@@ -3362,7 +3563,6 @@ call. 20 episodes of one show = 1 search + 20 parallel episode fetches.
 PlexBot extracts the movie title and year from filenames like:
 
     Inception.2010.1080p.BluRay.x264.mkv
-    The.Matrix.1999.REMASTERED.mkv
 
 It queries OMDb, TheTVDB, or TMDb, then creates a per-movie subfolder:
 
@@ -3371,169 +3571,131 @@ It queries OMDb, TheTVDB, or TMDb, then creates a per-movie subfolder:
             ├── Inception (2010) - 1080p - H.264 - 5.1.mkv
             └── Inception (2010).en.srt
 
-All unique titles are searched in parallel. Duplicate titles only hit
-the API once. Confident matches skip the redundant detail API call.
-
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  LOOKUP VIA — SOURCES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Both tabs have a LOOKUP VIA selector with brand icons in the toolbar.
-The selected source icon also appears on the Lookup button itself.
-
   TV Shows:  TVmaze (default)  ·  TheTVDB
   Movies:    OMDb (default)    ·  TheTVDB  ·  TMDb
 
-TVmaze   — Free, no key required, works immediately.
+TVmaze   — Free, no key required.
 TheTVDB  — Built-in key, no setup required.
 OMDb     — Free key required (1,000 lookups/day).
-TMDb     — Built-in token, no setup required. Excellent coverage.
+TMDb     — Built-in token, no setup required.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SUBTITLE DETECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot finds subtitle files in two locations:
+PlexBot finds subtitles in two locations:
 
-  1. Same folder as the video — any subtitle whose filename starts
-     with the video stem (e.g. Show.S01E01.en.srt next to the .mkv).
-     Language tags like .en, .fr, .sdh, .forced are preserved.
+  1. Same folder as the video — subtitle stem starts with the video stem.
+     Language tags (.en, .fr, .sdh, .forced) are preserved.
 
-  2. Subtitle subfolders — checks for any folder named Subs,
-     Subtitles, Sub, or Subtitle (any capitalisation) inside the
-     video's directory. All subtitle files found there are included.
-     Language is detected from the filename (e.g. English.srt → .en).
-
-Subtitles are moved alongside the video to the destination folder.
+  2. Subtitle subfolders — checks Subs, Subtitles, Sub, Subtitle
+     (any capitalisation). Language detected from filename:
+     English.srt → .en.srt, French.forced.srt → .fr.forced.srt
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SETTINGS PANEL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Click the ▶ SETTINGS header in the right-hand panel to expand settings.
+Click ▶ SETTINGS in the right panel to expand. The right panel is
+fully scrollable with the mouse wheel.
 
 FILE MODE
-  ✂  Move               — File is moved and renamed. Original is removed.
+  ✂  Move               — File is moved and renamed. Original removed.
   ⎘  Copy & Keep        — Renamed copy made at destination. Original kept.
 
 POST-RENAME CLEANUP
-  Auto-clean junk files after move
-  → After a successful Move, automatically removes junk sidecar files
-    (.nfo, .jpg, .txt, .idx, .htm, .png, .url, .bif) from the source
-    folder. Also removes empty Subs/Subtitles subfolders and the source
-    folder itself if empty.
-  → On by default. Grayed out when Copy mode is selected.
-  → Only runs when a destination folder is set (different from source).
+  Click ▶ POST-RENAME CLEANUP to expand the extension list.
+  "Enable auto-clean after move" checkbox activates the feature.
 
-FOLDER STRUCTURE (TV Shows)
-  Include year in show folder & filename
-  → Show Name (YYYY) / Season 01 / Show Name (YYYY) - S01E01 - Title.mkv
-  On by default.
+  Each junk file type has its own checkbox (all on by default):
+  · .nfo   — metadata files
+  · .jpg   — poster/fanart images
+  · .txt   — text files
+  · .idx   — subtitle index files
+  · .htm   — HTML files
+  · .png   — PNG images (including files in subfolders like Screens/)
+  · .url   — internet shortcuts
+  · .bif   — Plex trick-play files
+  · Custom — type comma-separated extensions to add more
 
-FOLDER STRUCTURE (Movies)
-  Create per-movie subfolder
-  → Movie Title (YYYY) / Movie Title (YYYY).mkv
-  On by default.
+  Rules:
+  · Only runs in Move mode (grayed out in Copy mode)
+  · Only runs when a destination folder is set
+  · Recurses into all subfolders — finds files in Screens/, Extras/ etc.
+  · Removes empty subfolders after cleaning
+  · The PARENT of whatever you dragged is always protected from deletion.
+    — Drag a folder  → that folder can be deleted once empty
+    — Drag files     → their folder is protected, never deleted
+    — Drag a parent folder → that parent is protected, subfolders can be deleted
+
+FOLDER STRUCTURE
+  TV:     Include year in show folder → Show Name (YYYY) / Season 01 / ...
+  Movies: Create per-movie subfolder  → Movie Title (YYYY) / ...
 
 INCLUDE IN FILENAME
-  Each tag can be toggled independently:
-  · Video Resolution  (e.g. 1080p, 2160p)
-  · Video Codec       (e.g. HEVC, H.264)
-  · Audio Channels    (e.g. 5.1, 7.1, 2.0)
+  · Video Resolution  (e.g. 1080p)
+  · Video Codec       (e.g. HEVC)
+  · Audio Channels    (e.g. 5.1)
 
 SEARCH OPTIONS
-  Strip year from search query
-  → Removes years like (2005) from search terms to avoid narrow results.
-  → On by default.
-
-  Concurrent lookups
-  → 5 / 10 / 15 / 20 / 25 / 30 threads. Default is 5.
-  → Higher values speed up large batches significantly.
-  → The same thread count is used for both lookups and file renaming.
+  · Strip year from search query (on by default)
+  · Concurrent lookups: 5 / 10 / 15 / 20 / 25 / 30 threads (default 5)
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  AUTO-UPDATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot checks GitHub for updates automatically on startup.
+PlexBot checks GitHub for updates on every startup (background thread).
 
-  · Check runs in the background — no delay to launch
-  · If a newer version is found, a green banner appears below
-    the header: "PlexBot v1.0x is available — click to update"
-  · Click the banner to open the Update dialog
-  · Click ✕ on the banner to dismiss it
-
-Running from source (.py):
-  PlexBot downloads the new plexbot.py, verifies it, replaces
-  the current file, then offers to restart automatically.
-
-Running as PlexBot.exe:
-  The EXE cannot update itself. Clicking the banner opens the
-  GitHub Releases page so you can download the new EXE.
-
-Updates are hosted at:
-  github.com/dmurr5050/Plexbot
+  · Green banner appears if a newer version is available
+  · Source users: one-click download, replace, and restart
+  · EXE users: opens GitHub Releases page
+  · Hosted at: github.com/dmurr5050/Plexbot
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  PERFORMANCE — LARGE BATCHES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  · TV: one show-search per unique show, not per episode.
-  · Movies: all unique titles searched in parallel. Duplicate titles
-    only searched once. Confident matches skip the detail fetch.
-  · Lookup UI debounced at 100 ms. Rename UI debounced at 150 ms.
-  · History dialog virtual rendering — instant with 4,000+ entries.
-  · Apply & Rename stays disabled until full batch completes.
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- SMART LOOKUP PICKER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-When PlexBot cannot confidently match a filename, a search dialog
-opens centred over the app window. Pre-filled search box, scrollable
-results list, continue batch after confirming or skipping.
+  · TV: one show-search per unique show, all parallel
+  · Movies: all unique titles parallel, session cache
+  · Lookup UI debounced 100ms · Rename UI debounced 150ms
+  · History dialog virtual rendering — instant at 4,000+ entries
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  RIGHT-CLICK MENU
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Right-click any file row during or after a lookup:
-
+Right-click any file row:
   🔍 Manual Search…     Open picker pre-filled with detected name
-  🔄 Re-run Auto Lookup  Retry the automatic lookup for this file
-  ✕  Remove from list   Remove this entry without processing it
+  🔄 Re-run Auto Lookup  Retry automatic lookup for this file
+  ✕  Remove from list   Remove without processing
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  FOLDER CLEANUP  (🧹 button in header)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Manual cleanup tool — removes junk sidecar files recursively.
-
-Files removed:  .txt  .idx  .nfo  .jpg  .htm  .png  .url  .bif
-Also removes:   Empty subfolders · System Volume Information
-
-Use this for folders not covered by the auto-cleanup, or to clean
-up folders before loading files into PlexBot.
+Manual cleanup — scan any folder and remove junk files.
+Removes: .txt .idx .nfo .jpg .htm .png .url .bif
+Also removes empty subfolders and System Volume Information.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  RENAME HISTORY  (📋 button in header)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Every rename is logged. Opens instantly with 4,000+ entries.
-
-  · Original and new filename side by side
-  · Filter by All, TV, or Movie
-  · Search by any part of the filename
-  · Clear the full history when no longer needed
+Every rename logged. Opens instantly at 4,000+ entries.
+Filter All/TV/Movie · Search any filename · Clear history.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3542,17 +3704,6 @@ Every rename is logged. Opens instantly with 4,000+ entries.
 
 Video:     .mkv .mp4 .avi .mov .m4v .wmv .ts .m2ts .mpg .mpeg
 Subtitles: .srt .sub .ass .ssa .vtt .idx .sup .pgs
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- CONFIGURATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Settings saved automatically to:
-  Documents\\PlexBot\\plexbot_config.json
-
-Stores: OMDb key, destinations, all settings, full rename history.
-Created automatically on first run.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3567,8 +3718,7 @@ Build EXE:
   Put plexbot.py + plexbot.ico + Build_exe.bat in same folder
   Double-click Build_exe.bat — PlexBot.exe appears in ~2 minutes
 
-FFmpeg (optional):
-  winget install ffmpeg
+FFmpeg (optional):  winget install ffmpeg
   Enables resolution and codec tags in filenames.
 
 
@@ -3576,13 +3726,12 @@ FFmpeg (optional):
  CONTACT & SUPPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Click the ✉ Contact button in the app header to copy the email,
+Click ✉ Contact in the header to copy the email address,
 or write to DMurr5050@gmail.com directly.
 
-If PlexBot saves you time, click 💛 Donate via PayPal in the header.
+If PlexBot saves you time, click 💛 Donate via PayPal.
 
-PlexBot is not affiliated with Plex Inc., TVmaze, OMDb, TheTVDB,
-or TMDb in any way.
+PlexBot is not affiliated with Plex Inc., TVmaze, OMDb, TheTVDB, or TMDb.
 """
 
 # ── Help / README Dialog ──────────────────────────────────────────────────────

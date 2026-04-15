@@ -1,4 +1,4 @@
-# 🎬 PlexBot v1.09
+# 🎬 PlexBot v1.10
 **Automatic Media File Renamer for Plex**  
 *Powered by DAT — Dans Automation Tools*
 
@@ -19,21 +19,19 @@ PlexBot is a desktop application that takes your messy downloaded video filename
 |---|---|
 | 📺 TV Show renaming | Looks up episode titles via **TVmaze** or **TheTVDB** |
 | 🎬 Movie renaming | Looks up titles and years via **OMDb**, **TheTVDB**, or **TMDb** |
-| 🔤 Subtitle renaming | Same-folder subs and Subs/Subtitles subfolder subs, with language tag detection |
-| 🏷️ Media tags | Optionally appends resolution, video codec, and audio channels |
-| 🧹 Auto-cleanup | Removes junk sidecar files from source after move — toggleable, on by default |
-| 🎨 Source brand icons | Brand icons on source pills and the Lookup button |
-| ⬆️ Auto-update | Checks GitHub on startup; one-click download and install |
-| 📁 Drag and drop | Drop files or whole folders directly onto the app |
-| 🔁 Recursive scan | Scans all subfolders automatically |
-| ⚡ Parallel lookups | Configurable 5–30 concurrent threads |
-| 🎯 Smart grouping | TV: one show-search per unique show. Movies: one search per unique title |
-| 🔍 Smart picker | Centred search dialog when auto-match isn't confident |
-| 🖱️ Right-click menu | Manual search or retry on any file |
-| 📋 Rename history | Instant-open with 4,000+ entries (virtual rendering) |
-| 💾 Saved settings | All preferences remembered between sessions |
-| ✂️ Move or Copy mode | Move files or keep originals and make a renamed copy |
-| ❓ In-app Help | Full documentation embedded — no internet needed |
+| 🔤 Subtitle renaming | Same-folder and subfolder subs with language tag detection |
+| 🏷️ Media tags | Resolution, video codec, audio channels — each toggleable |
+| 🧹 Auto-cleanup | Per-extension toggles, recurses into subfolders, smart folder protection |
+| 🎨 Source brand icons | Brand icons on source pills and Lookup button |
+| ⬆️ Auto-update | Checks GitHub on startup; one-click install |
+| 📁 Drag and drop | Files or whole folders |
+| 🔁 Recursive scan | All subfolders scanned automatically |
+| ⚡ Parallel lookups | 5–30 configurable threads |
+| 📋 Rename history | Instant-open with 4,000+ entries |
+| 💾 Saved settings | All preferences persisted between sessions |
+| ✂️ Move or Copy | Move files or keep originals |
+| 🖱️ Scrollable settings | Right panel fully scrollable with mouse wheel |
+| ❓ In-app Help | Full docs embedded — no internet needed |
 
 ---
 
@@ -43,10 +41,8 @@ PlexBot is a desktop application that takes your messy downloaded video filename
 
 ```
 Band.of.Brothers.S01E01.720p.mkv
-  →  TV Shows\Band of Brothers (2001)\Season 01\Band of Brothers (2001) - S01E01 - Currahee - 1080p - HEVC - 5.1.mkv
+  →  TV Shows\Band of Brothers (2001)\Season 01\Band of Brothers (2001) - S01E01 - Currahee.mkv
 ```
-
-**Smart grouping:** 20 episodes of one show = 1 show search + 20 parallel episode fetches.
 
 ### Movies
 
@@ -55,51 +51,69 @@ Inception.2010.1080p.BluRay.x264.mkv
   →  Movies\Inception (2010)\Inception (2010) - 1080p - H.264 - 5.1.mkv
 ```
 
-**Performance:** All unique titles searched in parallel. Duplicate titles only searched once. Confident matches skip the redundant detail API call.
-
 ---
 
 ## Subtitle Detection
 
 PlexBot finds subtitles in **two locations**:
 
-1. **Same folder as the video** — any subtitle whose filename starts with the video stem. Language tags (`.en`, `.fr`, `.sdh`, `.forced`) are preserved automatically.
-
-2. **Subtitle subfolders** — checks for any folder named `Subs`, `Subtitles`, `Sub`, or `Subtitle` (any capitalisation) inside the video's directory. All subtitle files found there are included. Language is detected from the filename — `English.srt` → `.en.srt`, `French.forced.srt` → `.fr.forced.srt`.
-
-All subtitles are moved alongside the renamed video to the destination folder.
+1. **Same folder** — subtitle stem starts with the video stem. Language tags preserved (`.en`, `.fr`, `.sdh`, `.forced`).
+2. **Subtitle subfolders** — checks `Subs`, `Subtitles`, `Sub`, `Subtitle` (any case). Language detected from filename: `English.srt` → `.en.srt`, `French.forced.srt` → `.fr.forced.srt`.
 
 ---
 
 ## Settings Panel
 
-Click **▶ SETTINGS** in the right-hand panel to expand.
+Click **▶ SETTINGS** in the right panel to expand. The entire right panel scrolls with the mouse wheel.
 
 ### File Mode
 | Mode | Behaviour |
 |---|---|
-| **✂ Move** | File is moved and renamed. Original is removed. *(default)* |
-| **⎘ Copy & Keep Original** | Renamed copy made at destination. Original kept. |
+| **✂ Move** *(default)* | File moved and renamed. Original removed. |
+| **⎘ Copy & Keep** | Renamed copy created. Original kept. |
 
 ### Post-Rename Cleanup
-**Auto-clean junk files after move** — on by default.
 
-After a successful Move, automatically removes junk sidecar files (`.nfo`, `.jpg`, `.txt`, `.idx`, `.htm`, `.png`, `.url`, `.bif`) from the source folder. Also removes empty `Subs`/`Subtitles` subfolders and the source folder itself if empty.
+Click **▶ POST-RENAME CLEANUP** to expand. The **"Enable auto-clean after move"** checkbox activates the feature.
 
-- Grayed out and inactive when **Copy** mode is selected
-- Only runs when a destination folder is set (i.e. files are moving to a different location)
-- Each deletion is safe — errors are silently skipped, never affects the rename
+Each file type has its own checkbox — all on by default:
+
+| Extension | Type |
+|---|---|
+| `.nfo` | Metadata files |
+| `.jpg` | Poster / fanart images |
+| `.txt` | Text files |
+| `.idx` | Subtitle index files |
+| `.htm` | HTML files |
+| `.png` | PNG images *(includes subfolders like `Screens/`)* |
+| `.url` | Internet shortcuts |
+| `.bif` | Plex trick-play files |
+| Custom | Comma-separated extensions |
+
+**Rules:**
+- Only runs in **Move** mode (grayed out in Copy)
+- Only runs when a **destination folder is set**
+- **Recurses into all subfolders** — catches files in `Screens/`, `Extras/`, etc.
+- Removes empty subfolders after cleaning
+
+**Folder protection — the parent of what you drag is always safe:**
+
+| You drag | Protected | Can be deleted when empty |
+|---|---|---|
+| `DMV.S01E16…` folder | `JD Downloads` (its parent) | `DMV.S01E16…` ✓ |
+| `JD Downloads` folder | `Desktop` (its parent) | Episode subfolders ✓ |
+| Individual files | Their containing folder | Sub-folders inside ✓ |
 
 ### Folder Structure
-- **TV Shows** — "Include year in show folder & filename" → `Show Name (YYYY) / Season 01 / ...` — on by default
-- **Movies** — "Create per-movie subfolder" → `Movie Title (YYYY) / ...` — on by default
+- **TV** — "Include year in show folder" → `Show Name (YYYY) / Season 01 / …`
+- **Movies** — "Create per-movie subfolder" → `Movie Title (YYYY) / …`
 
 ### Include in Filename
-Toggle each independently: Video Resolution · Video Codec · Audio Channels
+Toggle independently: Video Resolution · Video Codec · Audio Channels
 
 ### Search Options
-- **Strip year from search query** — removes years from search terms (on by default)
-- **Concurrent lookups** — 5/10/15/20/25/30 threads (default 5), used for both lookups and renames
+- Strip year from search query (on by default)
+- Concurrent lookups: 5 / 10 / 15 / 20 / 25 / 30 threads (default 5)
 
 ---
 
@@ -114,61 +128,37 @@ Toggle each independently: Video Resolution · Video Codec · Audio Channels
 |---|---|
 | TVmaze | No key needed |
 | TheTVDB | Built-in key — no setup |
-| OMDb | Free key required — [omdbapi.com/apikey.aspx](http://www.omdbapi.com/apikey.aspx) |
-| TMDb | Built-in token — no setup. Excellent coverage. |
+| OMDb | Free key — [omdbapi.com/apikey.aspx](http://www.omdbapi.com/apikey.aspx) |
+| TMDb | Built-in token — no setup |
 
 ---
 
 ## Auto-Update
 
-PlexBot checks GitHub 3 seconds after launch (background thread — zero startup delay).
+Checks GitHub 3 seconds after launch (background — zero startup delay).
 
-- Green banner appears below the header if an update is available
-- **Source users (.py):** one-click download, replace, and restart
-- **EXE users:** opens the GitHub Releases page
-- Hosted at [github.com/dmurr5050/Plexbot](https://github.com/dmurr5050/Plexbot)
-
----
-
-## Performance — Large Batches
-
-| Area | Optimisation |
-|---|---|
-| TV lookups | One show-search per unique show; all parallel |
-| Movie lookups | All unique titles parallel; session cache; skip redundant fetch |
-| Lookup UI | Debounced at 100ms |
-| Rename UI | Debounced at 150ms |
-| History dialog | Virtual canvas — instant with 4,000+ entries |
-
----
-
-## Supported File Types
-
-**Video:** `.mkv` `.mp4` `.avi` `.mov` `.m4v` `.wmv` `.ts` `.m2ts` `.mpg` `.mpeg`  
-**Subtitles:** `.srt` `.sub` `.ass` `.ssa` `.vtt` `.idx` `.sup` `.pgs`
+- Green banner if update available
+- **Source (.py):** one-click download, replace, restart
+- **EXE:** opens GitHub Releases page
+- [github.com/dmurr5050/Plexbot](https://github.com/dmurr5050/Plexbot)
 
 ---
 
 ## Getting Started
 
-### Option A — Run the EXE
-Download `PlexBot.exe` and `plexbot.ico` from [Releases](https://github.com/dmurr5050/Plexbot/releases) — keep both in the same folder.
+**Option A — Run the EXE**  
+Download `PlexBot.exe` and `plexbot.ico` from [Releases](https://github.com/dmurr5050/Plexbot/releases).
 
-### Option B — Run from Python source
+**Option B — Run from source**
 ```bash
 pip install requests tkinterdnd2
 python plexbot.py
 ```
-Optional: `winget install ffmpeg` for resolution/codec tags.
 
-### Option C — Build the EXE yourself
-Put `plexbot.py`, `plexbot.ico`, and `Build_exe.bat` in the same folder. Double-click `Build_exe.bat`.
+**Option C — Build EXE**  
+Put `plexbot.py`, `plexbot.ico`, `Build_exe.bat` in same folder → double-click `Build_exe.bat`.
 
----
-
-## Configuration
-
-Auto-saved to `Documents\PlexBot\plexbot_config.json`
+**Optional:** `winget install ffmpeg` for resolution/codec tags.
 
 ---
 
@@ -176,57 +166,56 @@ Auto-saved to `Documents\PlexBot\plexbot_config.json`
 
 | Requirement | Notes |
 |---|---|
-| Python 3.10+ | Only if running from source |
+| Python 3.10+ | Source only |
 | `requests` | `pip install requests` |
-| `tkinterdnd2` | `pip install tkinterdnd2` — drag and drop |
-| FFmpeg | Optional — resolution and codec tags |
-| OMDb API key | Free — needed for OMDb movie lookups only |
+| `tkinterdnd2` | `pip install tkinterdnd2` |
+| FFmpeg | Optional — codec/resolution tags |
+| OMDb API key | Free — OMDb lookups only |
 
 ---
 
 ## Changelog
 
+### v1.10
+- **Folder protection fixed** — the *parent* of whatever you drag is protected, not the dragged item itself
+  - Drag `DMV.S01E16…` folder → that folder deleted when empty; `JD Downloads` (parent) protected
+  - Drag `JD Downloads` → episode subfolders cleaned up; `JD Downloads` itself protected
+  - Drag individual files → their containing folder protected; subfolders inside it can be deleted
+- **Auto-cleanup recurses into all subfolders** — `.png` in `Screens/`, `.nfo` in `Extras/` etc. are all found and deleted
+- Per-file exception handling — a locked file never aborts the rest of the cleanup pass
+
 ### v1.09
-- **Auto-cleanup setting** — "Auto-clean junk files after move" checkbox added to Settings panel under new POST-RENAME CLEANUP section
-- On by default; grayed out automatically when Copy mode is selected
-- **Subtitle subfolder detection** — PlexBot now also searches `Subs`, `Subtitles`, `Sub`, and `Subtitle` subfolders for subtitle files
-- Language detection for subfolder subs: `English.srt` → `.en.srt`, `French.forced.srt` → `.fr.forced.srt`
+- Post-rename cleanup expandable with per-extension checkboxes (`.nfo .jpg .txt .idx .htm .png .url .bif`) plus custom extensions field
+- Enable checkbox moved to its own row — no longer conflicts with expand/collapse toggle
+- Right panel scrollable with mouse wheel
+- Subtitle subfolder detection with language name→code mapping
 
 ### v1.08
-- Auto-update system — checks GitHub on startup, green banner when update available
-- One-click download and install for source users; opens Releases page for EXE users
-- Hosted at github.com/dmurr5050/Plexbot
+- Auto-update system with green banner; one-click for source users
 
 ### v1.07
-- Source brand icons on selector pills and Lookup button (updates live)
-- Fixed infinite recursion crash in lookup button proxy
+- Source brand icons on pills and Lookup button
 
 ### v1.06
-- TMDb added as a movie lookup source
-- Movie lookup parallelisation and session cache
-- History dialog virtual canvas rendering — instant with 4,000+ entries
-- Search picker always centres over the app window
-- Debounced lookup and rename UI updates
+- TMDb source; parallel movie lookups; virtual history rendering
 
 ### v1.05
-- Fixed Apply & Rename enabling mid-lookup
-- Taskbar icon uses `plexbot.ico`
+- Fixed Apply & Rename mid-lookup; taskbar icon
 
 ### v1.04
 - Folder Cleanup defaults to last source folder
 
 ### v1.03
-- Move or Copy mode; collapsible Settings panel
+- Move/Copy mode; collapsible Settings panel
 
 ### v1.02
 - TheTVDB support; Lookup Via source selector
 
 ### v1.01
-- Strip year; right-click menu; parallel lookups; TV/movie folder structure
-- Retry Errors; Folder Cleanup; In-app Help; background rename thread
+- Parallel lookups; right-click menu; retry errors; TV/movie folder structure
 
-### v1.0 — Initial Release
-- TV via TVmaze, Movie via OMDb, subtitle auto-detection, media tags, drag and drop
+### v1.0
+- Initial release
 
 ---
 
