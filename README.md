@@ -1,4 +1,4 @@
-# 🎬 PlexBot v1.10
+# 🎬 PlexBot v1.11
 **Automatic Media File Renamer for Plex**  
 *Powered by DAT — Dans Automation Tools*
 
@@ -22,6 +22,7 @@ PlexBot is a desktop application that takes your messy downloaded video filename
 | 🔤 Subtitle renaming | Same-folder and subfolder subs with language tag detection |
 | 🏷️ Media tags | Resolution, video codec, audio channels — each toggleable |
 | 🧹 Auto-cleanup | Per-extension toggles, recurses into subfolders, smart folder protection |
+| 📂 Destination history | Dropdown remembers last 10 destinations per tab |
 | 🎨 Source brand icons | Brand icons on source pills and Lookup button |
 | ⬆️ Auto-update | Checks GitHub on startup; one-click install |
 | 📁 Drag and drop | Files or whole folders |
@@ -41,7 +42,8 @@ PlexBot is a desktop application that takes your messy downloaded video filename
 
 ```
 Band.of.Brothers.S01E01.720p.mkv
-  →  TV Shows\Band of Brothers (2001)\Season 01\Band of Brothers (2001) - S01E01 - Currahee.mkv
+  →  TV Shows\Band of Brothers (2001)\Season 01\
+       Band of Brothers (2001) - S01E01 - Currahee.mkv
 ```
 
 ### Movies
@@ -50,6 +52,19 @@ Band.of.Brothers.S01E01.720p.mkv
 Inception.2010.1080p.BluRay.x264.mkv
   →  Movies\Inception (2010)\Inception (2010) - 1080p - H.264 - 5.1.mkv
 ```
+
+---
+
+## Destination Folder
+
+The DESTINATION field is now a **dropdown** that remembers your previous selections.
+
+- Click **▼** to open the dropdown and select a past destination instantly
+- Click **…** to browse for a new folder
+- Type or paste a path directly into the field
+- History is saved automatically after each successful rename
+- Up to **10 entries per tab** (TV and Movies have separate histories)
+- Leave blank to rename files in place without moving them
 
 ---
 
@@ -100,8 +115,8 @@ Each file type has its own checkbox — all on by default:
 
 | You drag | Protected | Can be deleted when empty |
 |---|---|---|
-| `DMV.S01E16…` folder | `JD Downloads` (its parent) | `DMV.S01E16…` ✓ |
-| `JD Downloads` folder | `Desktop` (its parent) | Episode subfolders ✓ |
+| Episode folder (`DMV.S01E16…`) | Its parent (`JD Downloads`) | The episode folder ✓ |
+| Parent folder (`JD Downloads`) | Its parent (`Desktop`) | Episode subfolders ✓ |
 | Individual files | Their containing folder | Sub-folders inside ✓ |
 
 ### Folder Structure
@@ -176,22 +191,24 @@ Put `plexbot.py`, `plexbot.ico`, `Build_exe.bat` in same folder → double-click
 
 ## Changelog
 
+### v1.11
+- **Destination dropdown** — the destination field is now a combobox that remembers the last 10 folders used per tab (TV and Movies tracked separately)
+- Dropdown history saves automatically after each successful rename
+- Browse (…) button adds the selected folder to history immediately
+- Fully editable — type or paste any path directly
+
 ### v1.10
-- **Folder protection fixed** — the *parent* of whatever you drag is protected, not the dragged item itself
-  - Drag `DMV.S01E16…` folder → that folder deleted when empty; `JD Downloads` (parent) protected
-  - Drag `JD Downloads` → episode subfolders cleaned up; `JD Downloads` itself protected
-  - Drag individual files → their containing folder protected; subfolders inside it can be deleted
-- **Auto-cleanup recurses into all subfolders** — `.png` in `Screens/`, `.nfo` in `Extras/` etc. are all found and deleted
-- Per-file exception handling — a locked file never aborts the rest of the cleanup pass
+- Folder protection fixed — parent of dragged item is protected, not the item itself
+- Auto-cleanup recurses into all subfolders (Screens/, Extras/, etc.)
+- Per-file exception handling — locked files never abort the cleanup pass
 
 ### v1.09
-- Post-rename cleanup expandable with per-extension checkboxes (`.nfo .jpg .txt .idx .htm .png .url .bif`) plus custom extensions field
-- Enable checkbox moved to its own row — no longer conflicts with expand/collapse toggle
+- Post-rename cleanup expandable with per-extension checkboxes plus custom extensions
 - Right panel scrollable with mouse wheel
 - Subtitle subfolder detection with language name→code mapping
 
 ### v1.08
-- Auto-update system with green banner; one-click for source users
+- Auto-update system with green banner and one-click install
 
 ### v1.07
 - Source brand icons on pills and Lookup button
@@ -200,7 +217,7 @@ Put `plexbot.py`, `plexbot.ico`, `Build_exe.bat` in same folder → double-click
 - TMDb source; parallel movie lookups; virtual history rendering
 
 ### v1.05
-- Fixed Apply & Rename mid-lookup; taskbar icon
+- Fixed Apply & Rename enabling mid-lookup
 
 ### v1.04
 - Folder Cleanup defaults to last source folder
@@ -212,7 +229,7 @@ Put `plexbot.py`, `plexbot.ico`, `Build_exe.bat` in same folder → double-click
 - TheTVDB support; Lookup Via source selector
 
 ### v1.01
-- Parallel lookups; right-click menu; retry errors; TV/movie folder structure
+- Parallel lookups; right-click menu; TV/movie folder structure
 
 ### v1.0
 - Initial release

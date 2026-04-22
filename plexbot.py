@@ -36,7 +36,7 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.10"
+VERSION       = "1.11"
 
 # ── GitHub auto-update settings ───────────────────────────────────────────────
 GITHUB_USER    = "dmurr5050"
@@ -1181,17 +1181,53 @@ class BaseTab(Frame):
         # ── Destination ───────────────────────────────────────────────────
         Label(p, text="DESTINATION", font=("Segoe UI", 9, "bold"),
               fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(16, 4))
-        df = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1, highlightbackground=BORDER)
+
+        df = Frame(p, bg=BG_SURFACE, bd=0, highlightthickness=1,
+                   highlightbackground=BORDER)
         df.pack(fill=X, padx=16, pady=(0, 4))
-        Entry(df, textvariable=self.dest_var, font=FONT_MONO_SM, bg=BG_SURFACE,
-              fg=TEXT, bd=0, insertbackground=self.color,
-              highlightthickness=0).pack(side=LEFT, fill=X, expand=True, padx=8, pady=6)
+
+        # Style the Combobox to match the dark theme
+        style = ttk.Style()
+        combo_style = f"{id(self)}.Dest.TCombobox"
+        style.configure(combo_style,
+                        fieldbackground=BG_SURFACE,
+                        background=BG_SURFACE,
+                        foreground=TEXT,
+                        selectbackground=BG_HOVER,
+                        selectforeground=TEXT,
+                        arrowcolor=self.color,
+                        borderwidth=0,
+                        relief="flat")
+        style.map(combo_style,
+                  fieldbackground=[("readonly", BG_SURFACE),
+                                   ("disabled", BG_SURFACE)],
+                  foreground=[("readonly", TEXT)],
+                  selectbackground=[("readonly", BG_HOVER)])
+
+        # Load saved history for this tab
+        hist_key = self._dest_history_key()
+        saved_hist = load_config().get(hist_key, [])
+        if not isinstance(saved_hist, list):
+            saved_hist = [saved_hist] if saved_hist else []
+
+        self._dest_combo = ttk.Combobox(
+            df,
+            textvariable=self.dest_var,
+            values=saved_hist,
+            font=FONT_MONO_SM,
+            style=combo_style,
+        )
+        self._dest_combo.pack(side=LEFT, fill=X, expand=True, padx=8, pady=6)
+
+        # Browse button
         bb = Label(df, text="…", font=FONT_BOLD, fg=self.color,
                    bg=BG_SURFACE, cursor="hand2", padx=8)
         bb.pack(side=RIGHT)
         bb.bind("<Button-1>", lambda e: self._pick_dest())
+
         Label(p, text="Leave blank to rename in place",
-              font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(anchor=W, padx=16, pady=(2, 0))
+              font=("Segoe UI", 8), fg=MUTED, bg=BG_PANEL).pack(
+              anchor=W, padx=16, pady=(2, 0))
 
         Frame(p, bg=BORDER, height=1).pack(fill=X, padx=16, pady=(10, 0))
 
@@ -1806,9 +1842,32 @@ class BaseTab(Frame):
             root = Path(folder)
             self._ingest(collect_video_files([root]), roots=[root])
 
+    def _dest_history_key(self): return "dest_history"  # override per tab
+
     def _pick_dest(self):
         f = filedialog.askdirectory(title="Select destination folder")
-        if f: self.dest_var.set(f)
+        if f:
+            self.dest_var.set(f)
+            self._add_dest_history(f)
+
+    def _add_dest_history(self, path: str):
+        """Add path to the destination dropdown history (max 10, newest first)."""
+        path = path.strip()
+        if not path:
+            return
+        key = self._dest_history_key()
+        cfg  = load_config()
+        hist = cfg.get(key, [])
+        if not isinstance(hist, list):
+            hist = [hist] if hist else []
+        # Remove duplicates, prepend new entry, cap at 10
+        hist = [h for h in hist if h != path]
+        hist.insert(0, path)
+        hist = hist[:10]
+        save_config({key: hist})
+        # Update the combobox values live
+        if hasattr(self, "_dest_combo"):
+            self._dest_combo["values"] = hist
 
     def _ingest(self, paths, roots=None):
         existing = {e["path"] for e in self.file_entries}
@@ -2541,6 +2600,9 @@ class BaseTab(Frame):
                 if removed_folders: status += f", {len(removed_folders)} empty folder(s) deleted"
                 if cleaned_files:   status += f", {len(cleaned_files)} junk file(s) cleaned"
                 self.app.set_status(status)
+                # Save destination to dropdown history after a successful rename
+                if renamed_c[0] > 0 and dest_root:
+                    self._add_dest_history(dest_root)
                 self._enable_btn(self.lookup_btn, self._start_lookup)
                 if any(e["status"] == "done" for e in self.file_entries):
                     self._maybe_enable_apply()
@@ -2595,8 +2657,13 @@ class TVTab(BaseTab):
         _saved_src = load_config().get("tv_source", TV_SOURCES[0])
         self._source_var    = StringVar(value=_saved_src if _saved_src in TV_SOURCES else TV_SOURCES[0])
         super().__init__(parent, app, self._dest_var_ref, ACCENT)
-        self._dest_var_ref.trace_add("write",
-            lambda *_: save_config({"tv_dest": self._dest_var_ref.get().strip()}))
+        self._dest_var_ref.trace_add("write", lambda *_: self._on_dest_changed())
+
+    def _dest_history_key(self): return "tv_dest_history"
+
+    def _on_dest_changed(self):
+        val = self._dest_var_ref.get().strip()
+        save_config({"tv_dest": val})
 
     def _toolbar(self, p):
         super()._toolbar(p)
@@ -2872,9 +2939,14 @@ class MoviesTab(BaseTab):
         _saved_src = load_config().get("movie_source", MOVIE_SOURCES[0])
         self._source_var    = StringVar(value=_saved_src if _saved_src in MOVIE_SOURCES else MOVIE_SOURCES[0])
         super().__init__(parent, app, self._dest_var_ref, ACCENT_BLUE)
-        self._dest_var_ref.trace_add("write",
-            lambda *_: save_config({"movie_dest": self._dest_var_ref.get().strip()}))
+        self._dest_var_ref.trace_add("write", lambda *_: self._on_dest_changed())
         self._inject_api_bar()
+
+    def _dest_history_key(self): return "movie_dest_history"
+
+    def _on_dest_changed(self):
+        val = self._dest_var_ref.get().strip()
+        save_config({"movie_dest": val})
 
     def _toolbar(self, p):
         super()._toolbar(p)
@@ -3514,7 +3586,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.10
+README_CONTENT = """# 🎬 PlexBot v1.11
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -3537,39 +3609,33 @@ fast. Tested with 4,000+ files renamed in a single session.
  HOW IT WORKS — TV SHOWS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot reads the filename and extracts the show name, season, and episode
-number from patterns like:
-
-    Happys.Place.S02E13.1080p.HEVC.x265-MeGusta.mkv
     Band.of.Brothers.S01E01.720p.mkv
-
-It queries TVmaze or TheTVDB for the episode title and renames the file:
-
-    Happy's Place (2024) - S02E13 - A New Chapter - 1080p - HEVC - 5.1.mkv
-
-Files are organised into a structured folder hierarchy:
-
-    TV Shows\
-      └── Band of Brothers (2001)\
-            └── Season 01\
-                  ├── Band of Brothers (2001) - S01E01 - Currahee.mkv
-                  └── Band of Brothers (2001) - S01E01 - Currahee.en.srt
+      → TV Shows\\Band of Brothers (2001)\\Season 01\\
+          Band of Brothers (2001) - S01E01 - Currahee.mkv
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  HOW IT WORKS — MOVIES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot extracts the movie title and year from filenames like:
-
     Inception.2010.1080p.BluRay.x264.mkv
+      → Movies\\Inception (2010)\\Inception (2010) - 1080p - H.264 - 5.1.mkv
 
-It queries OMDb, TheTVDB, or TMDb, then creates a per-movie subfolder:
 
-    Movies\
-      └── Inception (2010)\
-            ├── Inception (2010) - 1080p - H.264 - 5.1.mkv
-            └── Inception (2010).en.srt
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DESTINATION FOLDER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The DESTINATION field is a dropdown that remembers your previous
+selections (up to 10 per tab, newest first).
+
+  · Click the ▼ arrow to open the dropdown and pick a past location
+  · Click … to browse for a new folder
+  · Type a path directly into the field
+  · History is saved automatically after each successful rename
+  · Leave blank to rename files in place (no move)
+
+TV Shows and Movies each maintain their own separate history.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3591,7 +3657,7 @@ TMDb     — Built-in token, no setup required.
 
 PlexBot finds subtitles in two locations:
 
-  1. Same folder as the video — subtitle stem starts with the video stem.
+  1. Same folder as the video — subtitle stem starts with video stem.
      Language tags (.en, .fr, .sdh, .forced) are preserved.
 
   2. Subtitle subfolders — checks Subs, Subtitles, Sub, Subtitle
@@ -3603,37 +3669,39 @@ PlexBot finds subtitles in two locations:
  SETTINGS PANEL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Click ▶ SETTINGS in the right panel to expand. The right panel is
-fully scrollable with the mouse wheel.
+Click ▶ SETTINGS to expand. The right panel is scrollable with
+the mouse wheel.
 
 FILE MODE
-  ✂  Move               — File is moved and renamed. Original removed.
+  ✂  Move               — File moved and renamed. Original removed.
   ⎘  Copy & Keep        — Renamed copy made at destination. Original kept.
 
 POST-RENAME CLEANUP
-  Click ▶ POST-RENAME CLEANUP to expand the extension list.
+  Click ▶ POST-RENAME CLEANUP to expand.
   "Enable auto-clean after move" checkbox activates the feature.
 
-  Each junk file type has its own checkbox (all on by default):
+  Each file type has its own checkbox (all on by default):
   · .nfo   — metadata files
   · .jpg   — poster/fanart images
   · .txt   — text files
   · .idx   — subtitle index files
   · .htm   — HTML files
-  · .png   — PNG images (including files in subfolders like Screens/)
+  · .png   — PNG images (including subfolders like Screens/)
   · .url   — internet shortcuts
   · .bif   — Plex trick-play files
-  · Custom — type comma-separated extensions to add more
+  · Custom — comma-separated extensions (e.g. .sample, .ds_store)
 
   Rules:
   · Only runs in Move mode (grayed out in Copy mode)
   · Only runs when a destination folder is set
-  · Recurses into all subfolders — finds files in Screens/, Extras/ etc.
+  · Recurses into ALL subfolders — finds files in Screens/, Extras/ etc.
   · Removes empty subfolders after cleaning
-  · The PARENT of whatever you dragged is always protected from deletion.
-    — Drag a folder  → that folder can be deleted once empty
-    — Drag files     → their folder is protected, never deleted
-    — Drag a parent folder → that parent is protected, subfolders can be deleted
+
+  Folder protection:
+  · The PARENT of whatever you drag in is always protected.
+  · Drag an episode folder → that folder deleted when empty
+  · Drag a parent folder   → episode subfolders deleted when empty
+  · Drag individual files  → their containing folder is protected
 
 FOLDER STRUCTURE
   TV:     Include year in show folder → Show Name (YYYY) / Season 01 / ...
@@ -3646,56 +3714,44 @@ INCLUDE IN FILENAME
 
 SEARCH OPTIONS
   · Strip year from search query (on by default)
-  · Concurrent lookups: 5 / 10 / 15 / 20 / 25 / 30 threads (default 5)
+  · Concurrent lookups: 5 / 10 / 15 / 20 / 25 / 30 (default 5)
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  AUTO-UPDATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot checks GitHub for updates on every startup (background thread).
-
-  · Green banner appears if a newer version is available
-  · Source users: one-click download, replace, and restart
-  · EXE users: opens GitHub Releases page
-  · Hosted at: github.com/dmurr5050/Plexbot
+Checks GitHub on startup (background — no delay to launch).
+Green banner appears when a newer version is available.
+Source users: one-click download, replace, and restart.
+EXE users: opens GitHub Releases page.
+  github.com/dmurr5050/Plexbot
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- PERFORMANCE — LARGE BATCHES
+ PERFORMANCE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   · TV: one show-search per unique show, all parallel
   · Movies: all unique titles parallel, session cache
   · Lookup UI debounced 100ms · Rename UI debounced 150ms
-  · History dialog virtual rendering — instant at 4,000+ entries
+  · History dialog: virtual rendering, instant at 4,000+ entries
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- RIGHT-CLICK MENU
+ OTHER FEATURES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Right-click any file row:
+Right-click any file:
   🔍 Manual Search…     Open picker pre-filled with detected name
-  🔄 Re-run Auto Lookup  Retry automatic lookup for this file
-  ✕  Remove from list   Remove without processing
+  🔄 Re-run Auto Lookup  Retry automatic lookup
+  ✕  Remove from list
 
+🧹 Folder Cleanup (header button)
+  Manual cleanup — scan any folder, remove junk files recursively.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- FOLDER CLEANUP  (🧹 button in header)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Manual cleanup — scan any folder and remove junk files.
-Removes: .txt .idx .nfo .jpg .htm .png .url .bif
-Also removes empty subfolders and System Volume Information.
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- RENAME HISTORY  (📋 button in header)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Every rename logged. Opens instantly at 4,000+ entries.
-Filter All/TV/Movie · Search any filename · Clear history.
+📋 Rename History (header button)
+  Every rename logged. Filter All/TV/Movie. Search any filename.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
