@@ -36,7 +36,7 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.11"
+VERSION       = "1.12"
 
 # ── GitHub auto-update settings ───────────────────────────────────────────────
 GITHUB_USER    = "dmurr5050"
@@ -461,7 +461,10 @@ def build_tv_name(parsed: dict, ep_title: str, media: dict,
                   show_year: str = "") -> str:
     show  = safe_name(parsed["show_name"])
     if show_year:
-        show = f"{show} ({show_year})"
+        # Avoid "Show Name (2024) (2024)" if the show_name already ends with (year)
+        import re as _re
+        if not _re.search(r'\(' + re.escape(show_year) + r'\)\s*$', show):
+            show = f"{show} ({show_year})"
     s, e  = f"S{parsed['season']:02d}", f"E{parsed['episode']:02d}"
     title = safe_name(ep_title)
     tags  = build_media_tags(media, use_res, use_vc, use_ac)
@@ -2424,6 +2427,37 @@ class BaseTab(Frame):
             self._rename_flush_pending = False
             self._rename_active        = True
 
+            # Global conflict resolution choice set by ConflictDialog
+            # 'ask'=show dialog, 'overwrite_all'=always overwrite, 'skip_all'=always skip
+            conflict_choice = ["ask"]
+            conflict_event  = threading.Event()
+            conflict_result = [None]
+
+            def _resolve_conflict(src_name, tgt_path):
+                """Called from worker thread — shows dialog on main thread, blocks until answered."""
+                with lock:
+                    choice = conflict_choice[0]
+                if choice == "overwrite_all":
+                    return "overwrite"
+                if choice == "skip_all":
+                    return "skip"
+                # Need to ask — show dialog on main thread
+                conflict_event.clear()
+                def _show():
+                    dlg = ConflictDialog(self.app, src_name, tgt_path)
+                    result = dlg.result
+                    with lock:
+                        if result in ("overwrite_all", "skip_all"):
+                            conflict_choice[0] = result
+                        conflict_result[0] = result
+                    conflict_event.set()
+                self.after(0, _show)
+                conflict_event.wait()
+                r = conflict_result[0]
+                if r in ("overwrite_all", "overwrite"):
+                    return "overwrite"
+                return "skip"
+
             # ── Debounced UI refresh — fires every 150 ms while renaming ──
             def _rename_tick():
                 if self._rename_flush_pending:
@@ -2433,6 +2467,24 @@ class BaseTab(Frame):
                     self.after(150, _rename_tick)
 
             self.after(150, _rename_tick)
+
+            def _do_file_op(src, tgt, is_copy):
+                """Move or copy src→tgt, handling existing files via conflict dialog."""
+                if tgt.exists():
+                    resolution = _resolve_conflict(src.name, tgt)
+                    if resolution == "skip":
+                        return False   # signal: skipped
+                    else:
+                        # Overwrite — remove existing first to avoid permission error
+                        try:
+                            tgt.unlink()
+                        except Exception:
+                            pass
+                if is_copy:
+                    shutil.copy2(str(src), str(tgt))
+                else:
+                    shutil.move(str(src), str(tgt)) if dest_path else src.rename(tgt)
+                return True   # signal: success
 
             def rename_one(e):
                 src     = e["path"]
@@ -2444,10 +2496,15 @@ class BaseTab(Frame):
                     subs = find_subtitle_siblings(src)
 
                     e["_orig_name"] = src.name
-                    if is_copy:
-                        shutil.copy2(str(src), str(tgt))
-                    else:
-                        shutil.move(str(src), str(tgt)) if dest_path else src.rename(tgt)
+                    success = _do_file_op(src, tgt, is_copy)
+                    if not success:
+                        e["status"]    = "error"
+                        e["error_msg"] = "Skipped — file already exists"
+                        with lock:
+                            errors_c[0] += 1
+                        return
+
+                    if not is_copy:
                         with lock:
                             src_folders.add(src.parent)
 
@@ -2460,13 +2517,12 @@ class BaseTab(Frame):
                         new_sub_name = build_subtitle_name(e["new_name"], sub)
                         sub_tgt      = tgt_dir / new_sub_name
                         try:
-                            if is_copy:
-                                shutil.copy2(str(sub), str(sub_tgt))
-                            else:
-                                shutil.move(str(sub), str(sub_tgt)) if dest_path else sub.rename(sub_tgt)
-                                with lock:
-                                    src_folders.add(sub.parent)
-                            local_subs += 1
+                            sub_ok = _do_file_op(sub, sub_tgt, is_copy)
+                            if sub_ok:
+                                if not is_copy:
+                                    with lock:
+                                        src_folders.add(sub.parent)
+                                local_subs += 1
                         except Exception:
                             pass
                     with lock:
@@ -3586,7 +3642,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.11
+README_CONTENT = """# 🎬 PlexBot v1.12
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -3609,9 +3665,12 @@ fast. Tested with 4,000+ files renamed in a single session.
  HOW IT WORKS — TV SHOWS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    Band.of.Brothers.S01E01.720p.mkv
-      → TV Shows\\Band of Brothers (2001)\\Season 01\\
-          Band of Brothers (2001) - S01E01 - Currahee.mkv
+    Rivals.2024.S01E01.1080p.mkv
+      → TV Shows\\Rivals (2024)\\Season 01\\
+          Rivals (2024) - S01E01 - Episode Title.mkv
+
+If the filename already contains the show year, PlexBot will not
+duplicate it — Rivals.2024 becomes Rivals (2024), not Rivals (2024) (2024).
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3623,19 +3682,33 @@ fast. Tested with 4,000+ files renamed in a single session.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ FILE CONFLICTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When a rename target already exists, PlexBot pauses and shows a
+conflict dialog with four options:
+
+  ✓  Overwrite      — Replace this one file and continue
+  ✓✓ Overwrite All  — Replace this and all remaining conflicts
+  ✕  Skip           — Leave this file unchanged and continue
+  ✕✕ Skip All       — Leave this and all remaining conflicts unchanged
+
+Skipped files are marked as errors in the file list so you can
+see exactly what was not processed.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  DESTINATION FOLDER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-The DESTINATION field is a dropdown that remembers your previous
+The destination field is a dropdown that remembers your previous
 selections (up to 10 per tab, newest first).
 
-  · Click the ▼ arrow to open the dropdown and pick a past location
+  · Click ▼ to open the dropdown and pick a past location
   · Click … to browse for a new folder
   · Type a path directly into the field
-  · History is saved automatically after each successful rename
-  · Leave blank to rename files in place (no move)
-
-TV Shows and Movies each maintain their own separate history.
+  · History saved automatically after each successful rename
+  · Leave blank to rename files in place
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3655,62 +3728,37 @@ TMDb     — Built-in token, no setup required.
  SUBTITLE DETECTION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-PlexBot finds subtitles in two locations:
-
-  1. Same folder as the video — subtitle stem starts with video stem.
+  1. Same folder — subtitle stem starts with video stem.
      Language tags (.en, .fr, .sdh, .forced) are preserved.
 
-  2. Subtitle subfolders — checks Subs, Subtitles, Sub, Subtitle
-     (any capitalisation). Language detected from filename:
-     English.srt → .en.srt, French.forced.srt → .fr.forced.srt
+  2. Subtitle subfolders — checks Subs, Subtitles, Sub, Subtitle.
+     Language detected: English.srt → .en.srt
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  SETTINGS PANEL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Click ▶ SETTINGS to expand. The right panel is scrollable with
-the mouse wheel.
+Click ▶ SETTINGS to expand. Right panel scrolls with mouse wheel.
 
 FILE MODE
   ✂  Move               — File moved and renamed. Original removed.
-  ⎘  Copy & Keep        — Renamed copy made at destination. Original kept.
+  ⎘  Copy & Keep        — Renamed copy created. Original kept.
 
 POST-RENAME CLEANUP
   Click ▶ POST-RENAME CLEANUP to expand.
-  "Enable auto-clean after move" checkbox activates the feature.
-
-  Each file type has its own checkbox (all on by default):
-  · .nfo   — metadata files
-  · .jpg   — poster/fanart images
-  · .txt   — text files
-  · .idx   — subtitle index files
-  · .htm   — HTML files
-  · .png   — PNG images (including subfolders like Screens/)
-  · .url   — internet shortcuts
-  · .bif   — Plex trick-play files
-  · Custom — comma-separated extensions (e.g. .sample, .ds_store)
-
-  Rules:
-  · Only runs in Move mode (grayed out in Copy mode)
-  · Only runs when a destination folder is set
-  · Recurses into ALL subfolders — finds files in Screens/, Extras/ etc.
-  · Removes empty subfolders after cleaning
-
-  Folder protection:
-  · The PARENT of whatever you drag in is always protected.
-  · Drag an episode folder → that folder deleted when empty
-  · Drag a parent folder   → episode subfolders deleted when empty
-  · Drag individual files  → their containing folder is protected
+  Per-extension checkboxes: .nfo .jpg .txt .idx .htm .png .url .bif
+  Plus custom extensions field.
+  · Move mode only · Destination must be set
+  · Recurses into all subfolders
+  · Parent of dragged item is always protected
 
 FOLDER STRUCTURE
-  TV:     Include year in show folder → Show Name (YYYY) / Season 01 / ...
-  Movies: Create per-movie subfolder  → Movie Title (YYYY) / ...
+  TV:     Include year in show folder/filename
+  Movies: Create per-movie subfolder
 
 INCLUDE IN FILENAME
-  · Video Resolution  (e.g. 1080p)
-  · Video Codec       (e.g. HEVC)
-  · Audio Channels    (e.g. 5.1)
+  Video Resolution · Video Codec · Audio Channels
 
 SEARCH OPTIONS
   · Strip year from search query (on by default)
@@ -3721,37 +3769,19 @@ SEARCH OPTIONS
  AUTO-UPDATE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Checks GitHub on startup (background — no delay to launch).
-Green banner appears when a newer version is available.
-Source users: one-click download, replace, and restart.
-EXE users: opens GitHub Releases page.
+Checks GitHub on startup. Green banner when update available.
+Source: one-click download, replace, restart.
+EXE: opens GitHub Releases page.
   github.com/dmurr5050/Plexbot
-
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- PERFORMANCE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  · TV: one show-search per unique show, all parallel
-  · Movies: all unique titles parallel, session cache
-  · Lookup UI debounced 100ms · Rename UI debounced 150ms
-  · History dialog: virtual rendering, instant at 4,000+ entries
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  OTHER FEATURES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Right-click any file:
-  🔍 Manual Search…     Open picker pre-filled with detected name
-  🔄 Re-run Auto Lookup  Retry automatic lookup
-  ✕  Remove from list
-
-🧹 Folder Cleanup (header button)
-  Manual cleanup — scan any folder, remove junk files recursively.
-
-📋 Rename History (header button)
-  Every rename logged. Filter All/TV/Movie. Search any filename.
+Right-click any file: Manual Search · Re-run Lookup · Remove
+📋 History — every rename logged, searchable, filter by type
+🧹 Cleanup — manual junk file removal from any folder
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3772,20 +3802,17 @@ Run from source:
 
 Build EXE:
   Put plexbot.py + plexbot.ico + Build_exe.bat in same folder
-  Double-click Build_exe.bat — PlexBot.exe appears in ~2 minutes
+  Double-click Build_exe.bat
 
 FFmpeg (optional):  winget install ffmpeg
-  Enables resolution and codec tags in filenames.
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  CONTACT & SUPPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Click ✉ Contact in the header to copy the email address,
-or write to DMurr5050@gmail.com directly.
-
-If PlexBot saves you time, click 💛 Donate via PayPal.
+Click ✉ Contact to copy the email address.
+DMurr5050@gmail.com  ·  💛 Donate via PayPal
 
 PlexBot is not affiliated with Plex Inc., TVmaze, OMDb, TheTVDB, or TMDb.
 """
@@ -4565,6 +4592,75 @@ class UpdateDialog(Toplevel):
         self._update_btn.configure(text="⬆  Retry", cursor="hand2",
                                    bg=SUCCESS, fg="#000")
         self._update_btn.bind("<Button-1>", lambda e: self._do_update())
+
+
+# ── File Conflict Dialog ──────────────────────────────────────────────────────
+class ConflictDialog(Toplevel):
+    """
+    Shown when a rename target already exists.
+    Returns one of: 'overwrite', 'skip', 'overwrite_all', 'skip_all'
+    via self.result (set before destroy).
+    """
+    def __init__(self, parent, src_name: str, tgt_path):
+        super().__init__(parent)
+        self.title("File Already Exists")
+        self.configure(bg=BG_DARK)
+        self.resizable(False, False)
+        self.grab_set()
+        self.result = "skip"   # default if window is closed
+        self._build(src_name, tgt_path)
+        self.update_idletasks()
+        w, h = 500, 230
+        px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{max(0,px)}+{max(0,py)}")
+        self.wait_window(self)
+
+    def _build(self, src_name, tgt_path):
+        # Header
+        hdr = Frame(self, bg=BG_PANEL, height=48)
+        hdr.pack(fill=X); hdr.pack_propagate(False)
+        Frame(hdr, bg=WARNING, width=4).pack(side=LEFT, fill=Y)
+        Label(hdr, text="⚠  File Already Exists",
+              font=("Segoe UI", 12, "bold"),
+              fg=WARNING, bg=BG_PANEL).pack(side=LEFT, padx=14)
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+
+        body = Frame(self, bg=BG_DARK)
+        body.pack(fill=BOTH, expand=True, padx=20, pady=14)
+
+        Label(body, text="The destination already contains a file with this name:",
+              font=FONT_SMALL, fg=TEXT_DIM, bg=BG_DARK).pack(anchor=W)
+        Label(body, text=str(tgt_path),
+              font=FONT_MONO_SM, fg=WARNING, bg=BG_DARK,
+              wraplength=460, justify=LEFT).pack(anchor=W, pady=(2, 8))
+        Label(body, text=f"Source:  {src_name}",
+              font=FONT_MONO_SM, fg=TEXT_DIM, bg=BG_DARK).pack(anchor=W)
+
+        Frame(self, bg=BORDER, height=1).pack(fill=X)
+        btn_row = Frame(self, bg=BG_PANEL)
+        btn_row.pack(fill=X, pady=10, padx=14)
+
+        def _btn(text, result, bg, fg):
+            b = Label(btn_row, text=text, font=FONT_SMALL,
+                      fg=fg, bg=bg, cursor="hand2", padx=14, pady=7)
+            b.pack(side=LEFT, padx=4)
+            b.bind("<Button-1>", lambda e: self._choose(result))
+            b.bind("<Enter>", lambda e, w=b, c=bg: w.configure(
+                bg=("#{:02x}{:02x}{:02x}".format(
+                    min(255,int(int(c[1:3],16)*1.2)),
+                    min(255,int(int(c[3:5],16)*1.2)),
+                    min(255,int(int(c[5:7],16)*1.2))))))
+            b.bind("<Leave>", lambda e, w=b, c=bg: w.configure(bg=c))
+
+        _btn("✓  Overwrite",     "overwrite",     SUCCESS,    "#000")
+        _btn("✓✓ Overwrite All", "overwrite_all", "#1a7a3a",  "#fff")
+        _btn("✕  Skip",          "skip",          BG_SURFACE, TEXT)
+        _btn("✕✕ Skip All",      "skip_all",      "#2a2a2a",  MUTED)
+
+    def _choose(self, result):
+        self.result = result
+        self.destroy()
 
 
 # ── Main Window ───────────────────────────────────────────────────────────────
