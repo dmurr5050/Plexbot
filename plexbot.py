@@ -2768,7 +2768,11 @@ class TVTab(BaseTab):
         year     = e["parsed"].get("show_year", "")
         season   = e["parsed"].get("season", 1)
         if self.opt_use_year_in_folder.get() and year:
-            show_folder = f"{show} ({year})"
+            # Avoid "Show (2024) (2024)" if show_name already ends with (year)
+            if not re.search(r'\(' + re.escape(year) + r'\)\s*$', show):
+                show_folder = f"{show} ({year})"
+            else:
+                show_folder = show
         else:
             show_folder = show
         season_folder = f"Season {season:02d}"
