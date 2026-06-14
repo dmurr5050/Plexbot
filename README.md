@@ -1,4 +1,4 @@
-# 🎬 PlexBot v1.12
+# 🎬 PlexBot v1.13
 **Automatic Media File Renamer for Plex**  
 *Powered by DAT — Dans Automation Tools*
 
@@ -28,6 +28,8 @@ PlexBot renames messy downloaded video filenames into clean, Plex-compatible for
 | ⚡ Parallel lookups | 5–30 threads |
 | 📋 Rename history | Instant-open at 4,000+ entries |
 | 🖱️ Scrollable settings | Right panel scrolls with mouse wheel |
+| 🖼️ Poster art | Search picker shows poster thumbnails (requires Pillow) |
+| 🌐 English translations | TheTVDB results translated to English automatically |
 
 ---
 
@@ -39,7 +41,7 @@ PlexBot renames messy downloaded video filenames into clean, Plex-compatible for
 Rivals.2024.S01E01.1080p.mkv  →  Rivals (2024) - S01E01 - Title.mkv
 ```
 
-If the filename already contains the show year, PlexBot will not duplicate it. `Rivals.2024` becomes `Rivals (2024)`, never `Rivals (2024) (2024)`.
+If the filename already contains the show year, PlexBot will not duplicate it. `Rivals.2024` becomes `Rivals (2024)`, never `Rivals (2024) (2024)`. This applies to both the filename and the folder name.
 
 ### Movies
 
@@ -47,6 +49,16 @@ If the filename already contains the show year, PlexBot will not duplicate it. `
 Inception.2010.1080p.BluRay.x264.mkv
   →  Movies\Inception (2010)\Inception (2010) - 1080p - H.264 - 5.1.mkv
 ```
+
+---
+
+## Search Picker
+
+When a title can't be matched automatically, the search picker opens with a list of candidates:
+
+- **Poster art** — each result shows a poster thumbnail pulled from the source (TVmaze, TheTVDB, OMDb, or TMDb). Requires `Pillow` (`pip install Pillow`); without it, a placeholder icon (📺/🎬) is shown instead and the picker works exactly the same.
+- **English translations** — for TheTVDB, titles and overviews are automatically translated to English in parallel, even if the show or movie's primary language is something else. Falls back to the original text if no English translation exists.
+- Click any result to select it, then confirm.
 
 ---
 
@@ -114,18 +126,23 @@ OMDb requires a free key from [omdbapi.com/apikey.aspx](http://www.omdbapi.com/a
 ## Getting Started
 
 ```bash
-pip install requests tkinterdnd2
+pip install requests tkinterdnd2 Pillow
 python plexbot.py
 ```
 
-Or download `PlexBot.exe` from [Releases](https://github.com/dmurr5050/Plexbot/releases). Optional: `winget install ffmpeg` for codec tags.
+Or download `PlexBot.exe` from [Releases](https://github.com/dmurr5050/Plexbot/releases). Optional: `winget install ffmpeg` for codec tags, `Pillow` for poster art in the search picker (works fine without it).
 
 ---
 
 ## Changelog
 
+### v1.13
+- **Poster art in search picker** — each result now shows a poster thumbnail from TVmaze, TheTVDB, OMDb, or TMDb. Requires `Pillow`; falls back to a placeholder icon if not installed
+- **English translations for TheTVDB** — titles and overviews are automatically translated to English in the search picker, regardless of the show/movie's primary language, fetched in parallel for speed
+- Search picker rows redesigned with a poster column alongside title, year, and description
+
 ### v1.12
-- **Year deduplication** — show names with years in the filename (e.g. `Rivals.2024`) no longer produce doubled years like `Rivals (2024) (2024)`
+- **Year deduplication** — show names with years in the filename (e.g. `Rivals.2024`) no longer produce doubled years like `Rivals (2024) (2024)`. Applies to both filenames and folder names
 - **File conflict dialog** — when a rename target already exists, a dialog offers Overwrite / Skip / Overwrite All / Skip All instead of crashing with `[Errno 13] Permission denied`
 - Overwrite removes the existing file before moving to avoid OS permission errors on locked/read-only destinations
 

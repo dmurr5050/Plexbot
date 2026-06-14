@@ -43,8 +43,8 @@ if exist "%ICON%" (
 )
 
 :: ── Install dependencies ─────────────────────────────────────
-echo  [3/4] Installing PyInstaller, requests, tkinterdnd2...
-"!PYTHON!" -m pip install pyinstaller requests tkinterdnd2 --quiet
+echo  [3/4] Installing PyInstaller, requests, tkinterdnd2, Pillow...
+"!PYTHON!" -m pip install pyinstaller requests tkinterdnd2 Pillow --quiet
 if errorlevel 1 (
     echo ERROR: pip install failed.
     pause & exit /b 1
@@ -71,6 +71,9 @@ echo.
     --hidden-import datetime ^
     --hidden-import tkinterdnd2 ^
     --collect-all tkinterdnd2 ^
+    --hidden-import PIL ^
+    --hidden-import PIL._tkinter_finder ^
+    --collect-submodules PIL ^
     --clean ^
     --noconfirm ^
     "%SCRIPT%"

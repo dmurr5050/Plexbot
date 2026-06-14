@@ -36,7 +36,7 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.12"
+VERSION       = "1.13"
 
 # ── GitHub auto-update settings ───────────────────────────────────────────────
 GITHUB_USER    = "dmurr5050"
@@ -151,6 +151,7 @@ def tvmaze_search_shows(query: str) -> list:
             "premiered": (show.get("premiered") or "")[:4],
             "network":   net,
             "summary":   re.sub(r"<[^>]+>", "", show.get("summary") or "").strip()[:120],
+            "poster":    (show.get("image") or {}).get("medium", ""),
         })
     return results
 
@@ -191,11 +192,15 @@ def omdb_search_movies(title: str, year, api_key: str) -> list:
         return []
     results = []
     for item in (data.get("Search") or [])[:10]:
+        poster = item.get("Poster", "")
+        if poster in ("N/A", "", None):
+            poster = ""
         results.append({
             "id":       item.get("imdbID", ""),
             "title":    item.get("Title", ""),
             "year":     item.get("Year", "????")[:4],
             "overview": f"IMDb: {item.get('imdbID','')}",
+            "poster":   poster,
         })
     return results
 
@@ -230,11 +235,14 @@ def tmdb_search_movies(title: str, year=None) -> list:
     results = []
     for item in (r.json().get("results") or [])[:10]:
         yr = (item.get("release_date") or "????")[:4]
+        poster_path = item.get("poster_path") or ""
+        poster = f"https://image.tmdb.org/t/p/w92{poster_path}" if poster_path else ""
         results.append({
             "id":       item.get("id"),
             "title":    item.get("title", ""),
             "year":     yr,
             "overview": (item.get("overview") or "")[:120],
+            "poster":   poster,
         })
     return results
 
@@ -278,8 +286,55 @@ def _tvdb_headers() -> dict:
     return {"Authorization": f"Bearer {_tvdb_auth_token()}",
             "Accept": "application/json"}
 
+def tvdb_get_translation(item_id, kind: str, language: str = "eng") -> dict:
+    """
+    Fetch an English (or other language) translation for a TheTVDB
+    series or movie. Returns {"name": ..., "overview": ...} — empty
+    strings if unavailable. 'kind' is 'series' or 'movies'.
+    """
+    try:
+        r = requests.get(f"{TVDB_BASE}/{kind}/{item_id}/translations/{language}",
+                         headers=_tvdb_headers(), timeout=6)
+        if r.status_code != 200:
+            return {}
+        data = r.json().get("data") or {}
+        return {
+            "name":     data.get("name") or "",
+            "overview": re.sub(r"<[^>]+>", "", data.get("overview") or "").strip()[:120],
+        }
+    except Exception:
+        return {}
+
+
+def _apply_english_translations(results: list, kind: str,
+                                 id_key: str = "id",
+                                 name_key: str = "name",
+                                 overview_key: str = "summary") -> None:
+    """
+    For TheTVDB search results, fetch English translations of name/overview
+    in parallel and overlay them onto each result (in-place) when available.
+    Falls back silently to the original text if no English translation exists.
+    """
+    import concurrent.futures
+    def _fetch(r):
+        tid = r.get(id_key)
+        if not tid:
+            return r, {}
+        return r, tvdb_get_translation(tid, kind, "eng")
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+            for r, trans in pool.map(_fetch, results):
+                if trans.get("name"):
+                    r[name_key] = trans["name"]
+                if trans.get("overview"):
+                    r[overview_key] = trans["overview"]
+    except Exception:
+        pass
+
+
 def tvdb_search_shows(query: str) -> list:
-    """Search TheTVDB for TV series, return [{id, name, premiered, network, summary}]."""
+    """Search TheTVDB for TV series, return [{id, name, premiered, network, summary, poster}]."""
     r = requests.get(f"{TVDB_BASE}/search",
                      params={"query": query, "type": "series", "limit": 10},
                      headers=_tvdb_headers(), timeout=10)
@@ -295,7 +350,12 @@ def tvdb_search_shows(query: str) -> list:
             "premiered": year,
             "network":   net,
             "summary":   desc,
+            "poster":    item.get("image_url") or "",
         })
+    # Ensure name/overview text is English regardless of the show's
+    # primary language — fetches translations in parallel.
+    _apply_english_translations(results, "series",
+                                 id_key="id", name_key="name", overview_key="summary")
     return results
 
 def tvdb_get_episode(show_id, season: int, episode: int) -> dict:
@@ -314,7 +374,7 @@ def tvdb_get_episode(show_id, season: int, episode: int) -> dict:
     raise ValueError(f"S{season:02d}E{episode:02d} not found on TheTVDB")
 
 def tvdb_search_movies(query: str, year=None) -> list:
-    """Search TheTVDB for movies, return [{id, title, year, overview}]."""
+    """Search TheTVDB for movies, return [{id, title, year, overview, poster}]."""
     params = {"query": query, "type": "movie", "limit": 10}
     if year:
         params["year"] = year
@@ -330,7 +390,11 @@ def tvdb_search_movies(query: str, year=None) -> list:
             "title":    item.get("name") or item.get("title", ""),
             "year":     y,
             "overview": desc,
+            "poster":   item.get("image_url") or "",
         })
+    # Ensure title/overview text is English regardless of original language
+    _apply_english_translations(results, "movies",
+                                 id_key="id", name_key="title", overview_key="overview")
     return results
 
 def tvdb_get_movie(movie_id) -> dict:
@@ -819,6 +883,63 @@ class Tooltip:
         if self.tip: self.tip.destroy(); self.tip = None
 
 
+# ── Poster Image Loader ───────────────────────────────────────────────────────
+_poster_cache: dict = {}   # url -> PhotoImage (or None if failed) — kept alive here
+
+def load_poster_image(url: str, max_w: int = 60, max_h: int = 90):
+    """
+    Download a poster image and return a Tkinter-compatible PhotoImage,
+    resized to fit within max_w x max_h. Returns None on any failure
+    (no network, unsupported format, missing Pillow, etc.) so callers
+    can fall back to a placeholder gracefully.
+
+    Results are cached by URL for the lifetime of the app.
+    """
+    if not url:
+        return None
+    if url in _poster_cache:
+        return _poster_cache[url]
+    try:
+        r = requests.get(url, timeout=8)
+        r.raise_for_status()
+        raw = r.content
+
+        # Prefer Pillow — handles JPEG, PNG, WEBP, with proper resizing
+        try:
+            from PIL import Image as _PImage, ImageTk as _ImageTk
+            import io as _io
+            img = _PImage.open(_io.BytesIO(raw)).convert("RGB")
+            # Resize, preserving aspect ratio, fit within max_w x max_h
+            iw, ih = img.size
+            scale  = min(max_w / iw, max_h / ih)
+            new_size = (max(1, int(iw * scale)), max(1, int(ih * scale)))
+            img = img.resize(new_size, _PImage.LANCZOS)
+            photo = _ImageTk.PhotoImage(img)
+            _poster_cache[url] = photo
+            return photo
+        except ImportError:
+            pass
+
+        # Fallback: plain Tkinter PhotoImage (PNG/GIF only, no resizing)
+        try:
+            from tkinter import PhotoImage as _PI
+            import base64 as _b64
+            photo = _PI(data=_b64.b64encode(raw))
+            # Downscale via subsample if it's larger than target
+            w, h = photo.width(), photo.height()
+            if w > max_w or h > max_h:
+                factor = max(1, max(w // max_w, h // max_h))
+                photo = photo.subsample(factor, factor)
+            _poster_cache[url] = photo
+            return photo
+        except Exception:
+            pass
+    except Exception:
+        pass
+    _poster_cache[url] = None
+    return None
+
+
 # ── Search Picker Dialog ─────────────────────────────────────────────────────
 class SearchPickerDialog(Toplevel):
     """
@@ -965,12 +1086,42 @@ class SearchPickerDialog(Toplevel):
         row = Frame(self._res_inner, bg=bg, cursor="hand2")
         row.pack(fill=X)
 
+        # ── Poster thumbnail (fixed 64x92 box, image or placeholder emoji) ──
+        is_show = "name" in result
+        poster_url = result.get("poster") or ""
+        poster_frame = Frame(row, bg=bg, width=64, height=92)
+        poster_frame.pack(side=LEFT, padx=(8, 4), pady=8)
+        poster_frame.pack_propagate(False)
+        poster_lbl = Label(poster_frame, text=("📺" if is_show else "🎬"),
+                           font=("Segoe UI", 26), fg=MUTED, bg=bg)
+        poster_lbl.pack(fill=BOTH, expand=True)
+
+        if poster_url:
+            def _load(lbl=poster_lbl, url=poster_url):
+                photo = load_poster_image(url, 60, 90)
+                if photo:
+                    def _apply():
+                        try:
+                            lbl.configure(image=photo, text="")
+                            lbl.image = photo  # keep reference alive
+                        except Exception:
+                            pass
+                    try:
+                        self.after(0, _apply)
+                    except Exception:
+                        pass
+            threading.Thread(target=_load, daemon=True).start()
+
+        # ── Content column (title/meta + description) ───────────────────────
+        content = Frame(row, bg=bg)
+        content.pack(side=LEFT, fill=BOTH, expand=True)
+
         # Top line: title + year
-        top = Frame(row, bg=bg)
-        top.pack(fill=X, padx=12, pady=(8,2))
+        top = Frame(content, bg=bg)
+        top.pack(fill=X, padx=4, pady=(8,2))
 
         # Build display title
-        if "name" in result:
+        if is_show:
             # TV show
             display = result["name"]
             meta    = f"{result.get('premiered','')}  {result.get('network','')}".strip()
@@ -988,42 +1139,49 @@ class SearchPickerDialog(Toplevel):
                   fg=MUTED, bg=bg).pack(side=LEFT)
 
         if desc:
-            Label(row, text=desc, font=FONT_SMALL, fg=TEXT_DIM,
-                  bg=bg, anchor=W, wraplength=580, justify=LEFT).pack(
-                  fill=X, padx=12, pady=(0,8))
+            Label(content, text=desc, font=FONT_SMALL, fg=TEXT_DIM,
+                  bg=bg, anchor=W, wraplength=520, justify=LEFT).pack(
+                  fill=X, padx=4, pady=(0,8))
 
         Frame(self._res_inner, bg=BORDER, height=1).pack(fill=X)
         self._result_rows.append(row)
 
-        # Bind click to select
-        def select(e, idx=i, r=row):
+        # Bind click to select — recursively, since the row now has
+        # several levels of nested frames (poster box + content column)
+        def select(e, idx=i):
             self._select(idx)
-        for w in [row] + row.winfo_children() + [
-                c for child in row.winfo_children() for c in child.winfo_children()]:
+        for w in [row] + self._all_descendants(row):
             try: w.bind("<Button-1>", select)
             except Exception: pass
+
+    def _all_descendants(self, widget):
+        """Return a flat list of every nested child widget under `widget`."""
+        out = []
+        for c in widget.winfo_children():
+            out.append(c)
+            out.extend(self._all_descendants(c))
+        return out
 
     def _select(self, idx: int):
         # Deselect previous
         if hasattr(self, "_selected_idx") and self._selected_idx is not None:
             prev_row = self._result_rows[self._selected_idx]
             bg = BG_ROW if self._selected_idx%2==0 else BG_ROW_ALT
-            prev_row.configure(bg=bg)
-            for c in prev_row.winfo_children():
-                c.configure(bg=bg)
-                for gc in c.winfo_children():
-                    try: gc.configure(bg=bg)
-                    except Exception: pass
+            self._recolor(prev_row, bg)
         # Select new
         self._selected_idx = idx
         row = self._result_rows[idx]
         sel_bg = "#1e2a3a" if self.color == ACCENT_BLUE else "#2a1e00"
-        row.configure(bg=sel_bg)
-        for c in row.winfo_children():
-            c.configure(bg=sel_bg)
-            for gc in c.winfo_children():
-                try: gc.configure(bg=sel_bg)
-                except Exception: pass
+        self._recolor(row, sel_bg)
+
+    def _recolor(self, widget, bg):
+        """Recursively set bg on a widget and all its descendants."""
+        try:
+            widget.configure(bg=bg)
+        except Exception:
+            pass
+        for c in widget.winfo_children():
+            self._recolor(c, bg)
 
     def _confirm(self):
         if not hasattr(self, "_selected_idx") or self._selected_idx is None:
@@ -3646,7 +3804,7 @@ class HistoryDialog(Toplevel):
 
 
 # ── Embedded README content ───────────────────────────────────────────────────
-README_CONTENT = """# 🎬 PlexBot v1.12
+README_CONTENT = """# 🎬 PlexBot v1.13
 Automatic Media File Renamer for Plex
 Powered by DAT — Dans Automation Tools
 
@@ -3683,6 +3841,22 @@ duplicate it — Rivals.2024 becomes Rivals (2024), not Rivals (2024) (2024).
 
     Inception.2010.1080p.BluRay.x264.mkv
       → Movies\\Inception (2010)\\Inception (2010) - 1080p - H.264 - 5.1.mkv
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ SEARCH PICKER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When a title can't be matched automatically, the search picker
+opens with a list of candidates to choose from:
+
+  · Poster art is shown alongside each result (requires Pillow —
+    pip install Pillow. Without it, a placeholder icon is shown
+    instead and everything still works normally)
+  · For TheTVDB, titles and descriptions are translated to English
+    automatically, even if the show or movie's primary language
+    is something else
+  · Click any result to select it, then confirm
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3801,13 +3975,14 @@ Subtitles: .srt .sub .ass .ssa .vtt .idx .sup .pgs
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Run from source:
-  pip install requests tkinterdnd2
+  pip install requests tkinterdnd2 Pillow
   python plexbot.py
 
 Build EXE:
   Put plexbot.py + plexbot.ico + Build_exe.bat in same folder
   Double-click Build_exe.bat
 
+Pillow (optional):  enables poster art in the search picker dialog
 FFmpeg (optional):  winget install ffmpeg
 
 
@@ -4909,6 +5084,11 @@ def main():
     except ImportError:
         print("TIP: Install tkinterdnd2 to enable drag-and-drop:\n"
               "     pip install tkinterdnd2")
+    try:
+        import PIL  # noqa
+    except ImportError:
+        print("TIP: Install Pillow to show poster art in the search picker:\n"
+              "     pip install Pillow")
     PlexBot().mainloop()
 
 if __name__ == "__main__":
