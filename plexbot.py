@@ -36,7 +36,7 @@ _TVDB_API_KEY = "068ef573-b79b-4162-b121-b5af659cdafd"
 TMDB_BASE     = "https://api.themoviedb.org/3"
 _TMDB_TOKEN   = "eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI1MTQ0ZjRhZGEwYjY3ODRiYWZmMjM2MjUxNjU5NDZjZSIsIm5iZiI6MTc3NDQwMzM2Mi42OTEsInN1YiI6IjY5YzMzZjIyNDIxNDlkMTc2MjM1MzAxMyIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.lSsMvJgiSPaTBolm9lQCHw8B5kG48bVPW6Nd68W2xZ8"
 APP_TITLE     = "PlexBot"
-VERSION       = "1.13"
+VERSION       = "1.13.1"
 
 # ── GitHub auto-update settings ───────────────────────────────────────────────
 GITHUB_USER    = "dmurr5050"
@@ -176,6 +176,38 @@ def tvmaze_get_episode_by_id(show_id: int, season: int, episode: int) -> dict:
 def tvmaze_get_episode(show_name: str, season: int, episode: int) -> dict:
     show_id = tvmaze_get_show_id(show_name)
     return tvmaze_get_episode_by_id(show_id, season, episode)
+
+def tvmaze_get_specials(show_id: int) -> list:
+    """
+    Return every special episode for a TVmaze show, sorted by airdate.
+
+    TVmaze does not use a season 0: specials carry number=None and are
+    flagged with type 'significant_special' / 'insignificant_special'.
+    The regular /episodebynumber endpoint therefore returns 404 for S00,
+    which is why specials used to fail with "show/episode not found".
+    """
+    r = requests.get(f"{TVMAZE_BASE}/shows/{show_id}/episodes",
+                     params={"specials": 1}, timeout=10)
+    r.raise_for_status()
+    specials = [
+        e for e in r.json()
+        if e.get("season") == 0
+        or e.get("type") in ("significant_special", "insignificant_special")
+    ]
+    # Undated specials go last so dated ones keep a stable, airdate order.
+    specials.sort(key=lambda e: (e.get("airdate") or "9999-99-99", e.get("id") or 0))
+    return specials
+
+def tvmaze_get_special_by_number(show_id: int, episode: int) -> dict:
+    """Map S00E0N to the Nth TVmaze special (specials have no numbers)."""
+    specials = tvmaze_get_specials(show_id)
+    if not specials:
+        raise ValueError(f"S00E{episode:02d} not found — show has no specials on TVmaze")
+    if episode < 1 or episode > len(specials):
+        raise ValueError(
+            f"S00E{episode:02d} not found — TVmaze lists only {len(specials)} special(s)")
+    ep = specials[episode - 1]
+    return {"name": (ep.get("name") or f"Special {episode}").strip()}
 
 # ── OMDb API ──────────────────────────────────────────────────────────────────
 def omdb_search_movies(title: str, year, api_key: str) -> list:
@@ -373,6 +405,73 @@ def tvdb_get_episode(show_id, season: int, episode: int) -> dict:
             return {"name": ep.get("name") or ep.get("episodeName") or f"Episode {episode}"}
     raise ValueError(f"S{season:02d}E{episode:02d} not found on TheTVDB")
 
+def tvdb_find_series_id(show_name: str, year: str = "") -> int:
+    """
+    Lightweight TheTVDB series lookup returning the best-matching ID.
+
+    Used for the specials fallback (TVmaze has no season-0 numbering), so
+    it avoids the per-result translation requests done by tvdb_search_shows.
+    """
+    r = requests.get(f"{TVDB_BASE}/search",
+                     params={"query": show_name, "type": "series", "limit": 10},
+                     headers=_tvdb_headers(), timeout=10)
+    r.raise_for_status()
+    items = (r.json().get("data") or [])[:10]
+    if not items:
+        raise ValueError(f"Show not found on TheTVDB: '{show_name}'")
+
+    def _norm(text: str) -> str:
+        return re.sub(r'[^a-z0-9]+', ' ', (text or '').lower()).strip()
+
+    query = _norm(show_name)
+    best, best_score = None, -1
+    for item in items:
+        name  = item.get("name") or ""
+        n     = _norm(name)
+        score = 4 if n == query else (3 if query and (query in n or n in query) else 1)
+        item_year = item.get("year") or (item.get("first_air_time") or "")[:4] or ""
+        if year and str(item_year)[:4] == str(year)[:4]:
+            score += 3
+        if score > best_score:
+            best, best_score = item, score
+    series_id = best.get("tvdb_id") or best.get("id")
+    if not series_id:
+        raise ValueError(f"Show not found on TheTVDB: '{show_name}'")
+    return series_id
+
+def get_tv_episode(src: str, show_id, show_name: str, season: int,
+                   episode: int, year: str = "") -> dict:
+    """
+    Return an episode title, handling TV specials and cross-source fallback.
+
+    TheTVDB stores specials as season 0 with normal numbering; TVmaze does
+    not. S00 lookups try the selected source first, then the other source,
+    instead of failing with "show not found".
+    """
+    if season == 0:
+        if src == "TheTVDB":
+            try:
+                return tvdb_get_episode(show_id, season, episode)
+            except Exception as first_error:
+                try:
+                    return tvmaze_get_special_by_number(
+                        tvmaze_get_show_id(show_name), episode)
+                except Exception:
+                    raise first_error
+        else:
+            try:
+                return tvmaze_get_special_by_number(show_id, episode)
+            except Exception as first_error:
+                try:
+                    return tvdb_get_episode(
+                        tvdb_find_series_id(show_name, year), season, episode)
+                except Exception:
+                    raise first_error
+
+    if src == "TheTVDB":
+        return tvdb_get_episode(show_id, season, episode)
+    return tvmaze_get_episode_by_id(show_id, season, episode)
+
 def tvdb_search_movies(query: str, year=None) -> list:
     """Search TheTVDB for movies, return [{id, title, year, overview, poster}]."""
     params = {"query": query, "type": "movie", "limit": 10}
@@ -424,11 +523,18 @@ def parse_tv_filename(filename: str):
     if not m:
         return None
     raw  = m.group(1)
+    # Year hint (e.g. "Doctor Who 2005" / "Show (2019)") used to pick the
+    # right series when a source has several shows with the same name.
+    year_hint = ""
+    ym = re.search(r'(?<!\d)((?:19|20)\d{2})(?!\d)', raw)
+    if ym:
+        year_hint = ym.group(1)
     show = re.sub(r'[._]+', ' ', raw).strip()
     show = re.sub(r'\s+', ' ', show).title()
     show = re.sub(r"\b'S\b", "'s", show)
     return {"show_name": show, "season": int(m.group(2)),
-            "episode": int(m.group(3)), "ext": ext}
+            "episode": int(m.group(3)), "ext": ext,
+            "filename_year": year_hint}
 
 def parse_movie_filename(filename: str):
     stem = Path(filename).stem
@@ -454,11 +560,15 @@ def safe_name(s: str) -> str:
 
 def strip_year_from_query(name: str) -> str:
     """Remove a trailing or parenthesised year from a show/movie name."""
+    original = name
     # Remove (YYYY) or [YYYY] anywhere
     name = re.sub(r'[\(\[]\s*(19|20)\d{2}\s*[\)\]]', '', name)
     # Remove bare year at end:  "Show Name 2005" → "Show Name"
     name = re.sub(r'\s+(19|20)\d{2}\s*$', '', name)
-    return name.strip()
+    name = name.strip()
+    # Never reduce a title to nothing — shows genuinely named after a year
+    # (e.g. "1923", "1883", "1994") must keep their name.
+    return name or original.strip()
 
 # ── Media Info via ffprobe ────────────────────────────────────────────────────
 _VIDEO_CODEC_MAP = {
@@ -2993,17 +3103,29 @@ class TVTab(BaseTab):
             groups[key]["entries"].append(e)
 
         src        = self._source_var.get()
+        alt_src    = "TheTVDB" if src != "TheTVDB" else "TVmaze"
         parallelism = int(self.opt_threads.get())
+
+        def _search(source: str, query: str) -> list:
+            return tvdb_search_shows(query) if source == "TheTVDB" \
+                   else tvmaze_search_shows(query)
 
         # ── Resolve show searches in parallel ─────────────────────────────
         def resolve_show(key_grp):
             key, grp = key_grp
             query = grp["query"]
             try:
-                if src == "TheTVDB":
-                    results = tvdb_search_shows(query)
-                else:
-                    results = tvmaze_search_shows(query)
+                # Search the selected source first; if it knows nothing about
+                # the show (e.g. a TV special only catalogued elsewhere), try
+                # the other source before giving up.
+                used = src
+                try:
+                    results = _search(src, query)
+                except Exception:
+                    results = []
+                if not results:
+                    used    = alt_src
+                    results = _search(alt_src, query)
 
                 if not results:
                     raise LookupNotFoundError(f"Show not found: '{query}'", query)
@@ -3013,7 +3135,8 @@ class TVTab(BaseTab):
                     raise LookupNotFoundError(f"Multiple matches for '{query}'", query)
 
                 return key, grp, {"id": top["id"], "name": top["name"],
-                                  "premiered": top.get("premiered", "")}, None
+                                  "premiered": top.get("premiered", ""),
+                                  "src": used}, None
             except LookupNotFoundError as ex:
                 return key, grp, None, ex
             except Exception as ex:
@@ -3054,7 +3177,8 @@ class TVTab(BaseTab):
             if chosen[0]:
                 show_data = {"id":        chosen[0]["id"],
                              "name":      chosen[0]["name"],
-                             "premiered": chosen[0].get("premiered", "")}
+                             "premiered": chosen[0].get("premiered", ""),
+                             "src":       chosen[0].get("src", src)}
                 for e in grp["entries"]:
                     e["_cached_show"] = show_data
             else:
@@ -3080,10 +3204,19 @@ class TVTab(BaseTab):
             query = p["show_name"]
             if self.opt_strip_year.get():
                 query = strip_year_from_query(query)
-            if src == "TheTVDB":
-                results = tvdb_search_shows(query)
-            else:
-                results = tvmaze_search_shows(query)
+
+            alt_src = "TheTVDB" if src != "TheTVDB" else "TVmaze"
+            used    = src
+            try:
+                results = tvdb_search_shows(query) if src == "TheTVDB" \
+                          else tvmaze_search_shows(query)
+            except Exception:
+                results = []
+            if not results:
+                used    = alt_src
+                results = tvdb_search_shows(query) if used == "TheTVDB" \
+                          else tvmaze_search_shows(query)
+
             if not results:
                 raise LookupNotFoundError(
                     f"Show not found: '{query}'", query)
@@ -3092,19 +3225,20 @@ class TVTab(BaseTab):
                 raise LookupNotFoundError(
                     f"Multiple matches for '{query}'", query)
             cached = {"id": top["id"], "name": top["name"],
-                      "premiered": top.get("premiered", "")}
+                      "premiered": top.get("premiered", ""), "src": used}
 
         self._finish_tv_lookup(entry, cached["id"], cached["name"],
-                               show_year=cached.get("premiered", ""))
+                               show_year=cached.get("premiered", ""),
+                               src=cached.get("src"))
 
-    def _finish_tv_lookup(self, entry, show_id, show_name: str, show_year: str = ""):
+    def _finish_tv_lookup(self, entry, show_id, show_name: str, show_year: str = "",
+                          src: str = None):
         p   = entry["parsed"]
-        src = self._source_var.get()
+        src = src or self._source_var.get()
 
-        if src == "TheTVDB":
-            ep = tvdb_get_episode(show_id, p["season"], p["episode"])
-        else:
-            ep = tvmaze_get_episode_by_id(show_id, p["season"], p["episode"])
+        ep = get_tv_episode(src, show_id, show_name,
+                            p["season"], p["episode"],
+                            year=p.get("filename_year", ""))
 
         media = get_media_info(entry["path"])
         entry["media_info"] = media
@@ -3123,11 +3257,32 @@ class TVTab(BaseTab):
         ]
 
     def _show_picker(self, entry, query: str):
-        src = self._source_var.get()
-        if src == "TheTVDB":
-            search_fn = tvdb_search_shows
-        else:
-            search_fn = tvmaze_search_shows
+        src     = self._source_var.get()
+        alt_src = "TheTVDB" if src != "TheTVDB" else "TVmaze"
+
+        def _search(source: str, q: str) -> list:
+            return tvdb_search_shows(q) if source == "TheTVDB" \
+                   else tvmaze_search_shows(q)
+
+        def search_fn(q):
+            # Show the selected source's results first, then the other
+            # source's — specials are sometimes only catalogued in one of
+            # them, which is what caused "show not found" before.
+            results, seen = [], set()
+            for source in (src, alt_src):
+                try:
+                    found = _search(source, q)
+                except Exception:
+                    found = []
+                for r in found:
+                    dedupe = (str(r.get("id")), r.get("name") or "")
+                    if dedupe in seen:
+                        continue
+                    seen.add(dedupe)
+                    r["src"] = source
+                    results.append(r)
+            return results
+
         # Apply strip-year to picker's initial query too
         if self.opt_strip_year.get():
             query = strip_year_from_query(query)
@@ -3138,7 +3293,8 @@ class TVTab(BaseTab):
 
     def _do_lookup_with_choice(self, entry, choice: dict):
         self._finish_tv_lookup(entry, choice["id"], choice["name"],
-                               show_year=choice.get("premiered", ""))
+                               show_year=choice.get("premiered", ""),
+                               src=choice.get("src", self._source_var.get()))
 
     def _update_preview(self):
         show = "Show Name (2001)" if self.opt_use_year_in_folder.get() else "Show Name"

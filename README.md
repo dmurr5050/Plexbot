@@ -1,4 +1,4 @@
-# 🎬 PlexBot v1.13
+# 🎬 PlexBot v1.13.1
 **Automatic Media File Renamer for Plex**  
 *Powered by DAT — Dans Automation Tools*
 
@@ -17,6 +17,7 @@ PlexBot renames messy downloaded video filenames into clean, Plex-compatible for
 | Feature | Details |
 |---|---|
 | 📺 TV Show renaming | **TVmaze** or **TheTVDB** |
+| 🎞️ TV specials | `S00E01` support — TVmaze specials list with TheTVDB season-0 fallback |
 | 🎬 Movie renaming | **OMDb**, **TheTVDB**, or **TMDb** |
 | 🔤 Subtitle renaming | Same-folder and subfolder subs, language tag detection |
 | 🏷️ Media tags | Resolution, codec, channels — toggleable |
@@ -43,6 +44,16 @@ Rivals.2024.S01E01.1080p.mkv  →  Rivals (2024) - S01E01 - Title.mkv
 
 If the filename already contains the show year, PlexBot will not duplicate it. `Rivals.2024` becomes `Rivals (2024)`, never `Rivals (2024) (2024)`. This applies to both the filename and the folder name.
 
+### TV Shows — Specials (`S00`)
+
+```
+Doctor.Who.2005.S00E01.1080p.mkv  →  Doctor Who (2005) - S00E01 - Born Again.mkv
+```
+
+Specials use season 0 (`S00E01`, `S00E02`, …). TVmaze has no season 0 — its specials carry no episode number — so these files used to fail as "not found". PlexBot now reads the source's specials list, and if the show has none there, falls back to TheTVDB's season-0 numbering.
+
+A year in the filename (`Doctor.Who.2005`, `Show.Name.(2019)`) is also used to pick the right series when several shows share a name, so reboots and remakes don't get mixed up.
+
 ### Movies
 
 ```
@@ -58,6 +69,7 @@ When a title can't be matched automatically, the search picker opens with a list
 
 - **Poster art** — each result shows a poster thumbnail pulled from the source (TVmaze, TheTVDB, OMDb, or TMDb). Requires `Pillow` (`pip install Pillow`); without it, a placeholder icon (📺/🎬) is shown instead and the picker works exactly the same.
 - **English translations** — for TheTVDB, titles and overviews are automatically translated to English in parallel, even if the show or movie's primary language is something else. Falls back to the original text if no English translation exists.
+- **Both TV sources** — for TV shows the picker lists TVmaze and TheTVDB results together, and remembers which source each result came from. This means a show only catalogued in one database can still be picked.
 - Click any result to select it, then confirm.
 
 ---
@@ -121,6 +133,8 @@ The destination field remembers your previous selections (up to 10 per tab).
 
 OMDb requires a free key from [omdbapi.com/apikey.aspx](http://www.omdbapi.com/apikey.aspx). All others work out of the box.
 
+**Automatic fallback:** if the chosen source has no result for a show, PlexBot tries the other source before declaring it missing. TV specials (`S00E01`) fall back to TheTVDB's season-0 numbering because TVmaze does not use season 0.
+
 ---
 
 ## Getting Started
@@ -135,6 +149,13 @@ Or download `PlexBot.exe` from [Releases](https://github.com/dmurr5050/Plexbot/r
 ---
 
 ## Changelog
+
+### v1.13.1
+- **TV specials (`S00E01`) now resolve** — TVmaze has no season 0 (specials carry no episode number), so special lookups used to fail with "show/episode not found". Specials are now matched against TVmaze's specials list, with automatic fallback to TheTVDB's season-0 numbering
+- **Cross-source show fallback** — if the selected source has no result for a show, PlexBot now tries the other source before reporting it as not found
+- **Search picker searches both sources** — unmatched shows can be picked from TVmaze and TheTVDB results in one list
+- **Year-aware series matching** — a year in the filename (e.g. `Doctor.Who.2005.S00E01`) is used to pick the right series when several share a name
+- **Year-only show names preserved** — `1923`, `1883`, `1994` are no longer stripped to an empty search query
 
 ### v1.13
 - **Poster art in search picker** — each result now shows a poster thumbnail from TVmaze, TheTVDB, OMDb, or TMDb. Requires `Pillow`; falls back to a placeholder icon if not installed
